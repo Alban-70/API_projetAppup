@@ -1,7 +1,7 @@
 const authService = require("../services/user.service");
 
 
-class AuthController {
+class UserController {
 
     /**
    * Generic handler for all service methods
@@ -31,11 +31,11 @@ class AuthController {
     
 
     static getMe(req, res) {
-        return AuthController.handle(authService.getMe.bind(authService), req, res);
+        return UserController.handle(authService.getMe.bind(authService), req, res);
     }
 
     static getAllUsers(req, res) {
-        return AuthController.handle(authService.getAllUser.bind(authService), req, res);
+        return UserController.handle(authService.getAllUser.bind(authService), req, res);
     }
     
     /**
@@ -45,7 +45,7 @@ class AuthController {
    * @returns {Promise<void>}
    */
     static register(req, res) {
-        return AuthController.handle(authService.registerUser.bind(authService), req, res);
+        return UserController.handle(authService.registerUser.bind(authService), req, res);
     }
 
     /**
@@ -55,22 +55,22 @@ class AuthController {
    * @returns {Promise<void>}
    */
     static login(req, res) {
-        return AuthController.handle(authService.loginUser.bind(authService), req, res);
+        return UserController.handle(authService.loginUser.bind(authService), req, res);
     }
 
     static forbiddenPassword(req, res) {
-        return AuthController.handle(authService.sendPasswordResetEmail.bind(authService), req, res);
+        return UserController.handle(authService.sendPasswordResetEmail.bind(authService), req, res);
     }
 
     static verifyResetPassword(req, res) {
-        return AuthController.handle(authService.verifyResetPassword.bind(authService), req, res);
+        return UserController.handle(authService.verifyResetPassword.bind(authService), req, res);
     }
 
     static verifyEmail(req, res) {
-        return AuthController.handle(authService.verifyEmail.bind(authService), req, res);
+        return UserController.handle(authService.verifyEmail.bind(authService), req, res);
     }
 
 }
 
 
-module.exports = AuthController;
+module.exports = UserController;

@@ -1,28 +1,23 @@
 const express = require("express");
 const router = express.Router();
 
-const AuthController = require("../controllers/user.controller");
+const UserController = require("../controllers/user.controller");
 
 
 
-router.get("/get/me", AuthController.getMe);
+router.get("/get/me", UserController.getMe);
 
-router.get("/get/all", AuthController.getAllUsers);
+router.get("/get/all", UserController.getAllUsers);
 
-router.post("/auth/register", AuthController.register);
+router.post("/auth/register", UserController.register);
 
-router.post("/email/verify", AuthController.verifyEmail);
+router.post("/email/verify", UserController.verifyEmail);
 
-router.post("/auth/login", AuthController.login);
+router.post("/auth/login", UserController.login);
 
-router.post("/password/forgot", AuthController.forbiddenPassword);
+router.post("/password/forgot", UserController.forbiddenPassword);
 
-router.post("/password/reset", AuthController.verifyResetPassword);
+router.post("/password/reset", UserController.verifyResetPassword);
 
 
 module.exports = router;
-
-
-
-// Connexion
-// passer le mail:mdp en base64 et le passer dans le header

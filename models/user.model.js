@@ -3,65 +3,69 @@ const { v4: uuidv4 } = require('uuid');
 
 
 
-async function getWebsiteConfiguration() {
-    const result = await pool.query(
-        "SELECT * FROM configuration LIMIT 1;"
-    );
-    return result.rows[0];
+class UserModel {
+
+    /**
+     * Executes a SQL query and returns all rows
+     * @param {String} sql - The SQL query to execute
+     * @param {Array} params - The query parameters
+     * @returns {Promise<Array>} - The rows returned by the query
+     */
+    static async query(sql, params = []) {
+        const result = await pool.query(sql, params);
+        return result.rows;
+    }
+
+    /**
+     * Executes a SQL query and returns a single row
+     * @param {String} sql - The SQL query to execute
+     * @param {Array} params - The query parameters
+     * @returns {Promise<Object|undefined>} - The first row returned or undefined
+     */
+    static async queryOne(sql, params = []) {
+        const result = await pool.query(sql, params);
+        return result.rows[0];
+    }
+
+    /**
+     * Executes a SQL COUNT query and returns the result as an integer
+     * @param {String} sql - The SQL COUNT query to execute
+     * @param {Array} params - The query parameters
+     * @returns {Promise<Number>} - The count result as an integer
+     */
+    static async queryCount(sql, params = []) {
+        const result = await pool.query(sql, params);
+        return parseInt(result.rows[0].count);
+    }
+
 }
 
+
+//#region WebsiteConfiguration
+// =============================== SELECT ===============================
 
 /**
- * Creates a new user in the database
- * @param {{ email: String, password: String }} user - The user data
- * @returns {Promise<Object|undefined>} - The created user id
+ * @returns {Promise<Object|undefined>} - The website configuration
  */
-async function createUser(user) {
-    const { email, password } = user;
-    const uuid = uuidv4();
-
-    const result = await pool.query(
-        `INSERT INTO users (uuid, email, password, created_dt, changed_dt) VALUES
-        ($1, $2, $3, NOW(), NOW())
-        RETURNING *;`,
-        [uuid, email, password]
+const getWebsiteConfiguration = () => {
+    return UserModel.queryOne(
+        "SELECT * FROM configuration LIMIT 1"
     );
-
-    return result.rows[0];
-};
-
-
-async function resetPassword(user) {
-    const { email, password } = user;
-
-    const result = await pool.query(
-        `UPDATE users SET password = $1 WHERE email = $2 RETURNING *;`,
-        [password, email]
-    );
-    return result.rows[0];
 }
+//#endregion
 
 
-async function countLoginAttemptsEvery15min(user_email) {
-    const result = await pool.query(
-        `SELECT COUNT(*) FROM login_logs
-        WHERE user_email = $1
-        AND password_type = 'login'
-        AND success = false
-        AND created_dt >= NOW() - INTERVAL '15 minutes';`,
-        [user_email]
-    );
-    
-    return parseInt(result.rows[0].count);
-}
+//#region Users
+// =============================== SELECT ===============================
 
-
-async function getUsers() {
-    const result = await pool.query(
+/**
+ * Gets all users from the database
+ * @returns {Promise<Array>} - The list of users
+ */
+const getUsers = () => {
+    return UserModel.query(
         "SELECT * FROM users;"
     );
-
-    return result.rows;
 }
 
 
@@ -70,13 +74,11 @@ async function getUsers() {
  * @param {String} email - The email to search for
  * @returns {Promise<Object|undefined>} - The user found or undefined
  */
-async function findUserByEmail(email) {
-    const result = await pool.query(
-        "SELECT * FROM users WHERE email = $1;",
+const findUserByEmail = (email) => {
+    return UserModel.queryOne(
+        "SELECT * FROM users WHERE email = $1;", 
         [email]
     );
-
-    return result.rows[0];
 }
 
 
@@ -85,13 +87,43 @@ async function findUserByEmail(email) {
  * @param {Number} id - The id to search for
  * @returns {Promise<Object|undefined>} - The user found or undefined
  */
-async function findUserById(id) {
-    const result = await pool.query(
-        "SELECT * FROM users WHERE id = $1;",
+const findUserById = (id) => {
+    return UserModel.queryOne(
+        "SELECT * FROM users WHERE id = $1;", 
         [id]
     );
+}
 
-    return result.rows[0];
+
+// =============================== INSERT ===============================
+
+/**
+ * Creates a new user in the database
+ * @param {{ email: String, password: String }} user - The user data
+ * @returns {Promise<Object|undefined>} - The created user id
+ */
+const createUser = ({ email, password }) => {
+    return UserModel.queryOne(
+        `INSERT INTO users (uuid, email, password, created_dt, changed_dt) VALUES
+        ($1, $2, $3, NOW(), NOW())
+        RETURNING *;`,
+        [uuidv4(), email, password]
+    );
+}
+
+// =============================== UPDATE ===============================
+
+/**
+ * Resets the password of a user
+ * @param {{ email: String, password: String }} user - The user data
+ * @returns {Promise<Object|undefined>} - The updated user
+ */
+const resetPassword = ({ email, password }) => {
+    return UserModel.queryOne(
+        `UPDATE users SET password = $1 WHERE email = $2 
+        RETURNING *;`,
+        [password, email]
+    );
 }
 
 
@@ -100,32 +132,18 @@ async function findUserById(id) {
  * @param {Int} user_id - The id of the user to verify
  * @returns {Promise<Object>} - The updated user
  */
-async function verifyUserEmail(user_id) {
-  const result = await pool.query(
-    `UPDATE users SET email_verified = true WHERE id = $1 RETURNING *;`,
-    [user_id]
-  );
-  return result.rows[0];
-}
-
-
-/**
- * Creates a login log entry in the database
- * @param {{ ip_address: String, user_agent: String, success: Boolean, user_email: String, password_type: String }} logs - The log data
- * @returns {Promise<Object>} - The created log entry
- */
-async function createLoginLogs(logs) {
-    const { ip_address, user_agent, success, token, user_email, password_type } = logs;
-
-    const result = await pool.query(
-        `INSERT INTO login_logs (ip_address, user_agent, success, token, user_email, password_type) VALUES
-        ($1, $2, $3, $4, $5, $6)
+const verifyUserEmail = (user_id) => {
+    return UserModel.queryOne(
+        `UPDATE users SET email_verified = true WHERE id = $1 
         RETURNING *;`,
-        [ip_address, user_agent, success, token ?? null, user_email, password_type]
+        [user_id]
     );
-
-    return result.rows[0];
 }
+//#endregion
+
+
+//#region LoginLogs
+// =============================== SELECT ===============================
 
 
 /**
@@ -133,74 +151,127 @@ async function createLoginLogs(logs) {
  * @param {String} token - The token to search for
  * @returns {Promise<Object|undefined>} - The log found or undefined
  */
-async function findLoginLogByToken(token) {
-  const result = await pool.query(
-    "SELECT * FROM login_logs WHERE token = $1;",
-    [token]
-  );
-  return result.rows[0];
+const findLoginLogByToken = (token) => {
+    return UserModel.queryOne(
+        "SELECT * FROM login_logs WHERE token = $1;", 
+        [token]
+    );
+}
+
+// ============================ SELECT COUNT ============================
+
+/**
+ * Counts the number of failed login attempts in the last 15 minutes
+ * @param {String} user_email - The email of the user
+ * @returns {Promise<Number>} - The number of failed login attempts
+ */
+const countLoginAttemptsEvery15min = (user_email) => {
+    return UserModel.queryCount(
+        `SELECT COUNT(*) FROM login_logs
+        WHERE user_email = $1
+        AND password_type = 'login'
+        AND success = false
+        AND created_dt >= NOW() - INTERVAL '15 minutes';`, 
+        [user_email]
+    );
 }
 
 
-async function countDailyResetPassword(user_email) {
-    const result = await pool.query(
+/**
+ * Counts the number of password resets in the last 24 hours
+ * @param {String} user_email - The email of the user
+ * @returns {Promise<Number>} - The number of password resets
+ */
+const countDailyResetPassword = (user_email) => {
+    return UserModel.queryCount(
         `SELECT COUNT(*) FROM login_logs
         WHERE user_email = $1
         AND password_type = 'reset_password'
         AND success = true
-        AND created_dt >= NOW() - INTERVAL '24 hours';`,
+        AND created_dt >= NOW() - INTERVAL '24 hours';`, 
         [user_email]
     );
-    
-    return parseInt(result.rows[0].count);
+}
+
+// =============================== INSERT ===============================
+
+/**
+ * Creates a login log entry in the database
+ * @param {{ ip_address: String, user_agent: String, success: Boolean, user_email: String, password_type: String }} logs - The log data
+ * @returns {Promise<Object>} - The created log entry
+ */
+const createLoginLogs = ({ ip_address, user_agent, success, token, user_email, password_type }) => {
+    return UserModel.queryOne(
+        `INSERT INTO login_logs (ip_address, user_agent, success, token, user_email, password_type) VALUES
+        ($1, $2, $3, $4, $5, $6)
+        RETURNING *;`,
+        [ip_address, user_agent, success, token ?? null, user_email, password_type]
+    );
+}
+//#endregion
+
+
+
+//#region AuthenticateCodes
+// =============================== SELECT ===============================
+
+/**
+ * Finds a 2FA code by code in the database
+ * @param {String} code - The code to search for
+ * @returns {Promise<Object|undefined>} - The code found or undefined
+ */
+const findA2FCodeByCode = (code) => {
+    return UserModel.queryOne(
+        "SELECT * FROM authenticate_codes WHERE code = $1;",
+        [code]
+    );
 }
 
 
+/**
+ * Finds the latest 2FA code by user id in the database
+ * @param {Number} user_id - The id of the user
+ * @returns {Promise<Object|undefined>} - The code found or undefined
+ */
+const findA2FCodeByUserId = (user_id) => {
+    return UserModel.queryOne(
+        `SELECT * FROM authenticate_codes WHERE user_id = $1
+        ORDER BY created_dt DESC;`, 
+        [user_id]
+    );
+}
 
-async function createAuthenticateCodes(data) {
-    const { user_id, code, expires_at } = data;
-    const uuid = uuidv4();
+// ============================ SELECT COUNT ============================
 
-    const result = await pool.query(
+/**
+ * Counts the number of 2FA codes for a user
+ * @param {Number} user_id - The id of the user
+ * @returns {Promise<Number>} - The number of 2FA codes
+ */
+const countA2FCodeByUserId = (user_id) => {
+    return UserModel.queryCount(
+        `SELECT COUNT(*) FROM authenticate_codes WHERE user_id = $1
+        GROUP BY user_id;`, 
+        [user_id]
+    );
+}
+
+// =============================== INSERT ===============================
+
+/**
+ * Creates a 2FA authentication code in the database
+ * @param {{ user_id: Number, code: String, expires_at: Date }} data - The code data
+ * @returns {Promise<Object|undefined>} - The created code entry
+ */
+const createAuthenticateCodes = ({ user_id, code, expires_at }) => {
+    return UserModel.queryOne(
         `INSERT INTO authenticate_codes (uuid, user_id, code, expires_at, created_dt, changed_dt) VALUES
         ($1, $2, $3, $4, NOW(), NOW())
         RETURNING *;`,
-        [uuid, user_id, code, expires_at]
+        [uuidv4(), user_id, code, expires_at]
     );
-
-    return result.rows[0];
 }
-
-
-async function findA2FCodeByCode(code) {
-    const result = await pool.query(
-        `SELECT * FROM authenticate_codes WHERE code = $1;`,
-        [code]
-    );
-
-    return result.rows[0];
-}
-
-
-async function findA2FCodeByUserId(user_id) {
-    const result = await pool.query(
-        `SELECT * FROM authenticate_codes WHERE user_id = $1
-        ORDER BY created_dt DESC;`,
-        [user_id]
-    );
-
-    return result.rows[0];
-}
-
-async function countA2FCodeByUserId(user_id) {
-    const result = await pool.query(
-        `SELECT COUNT(*) FROM authenticate_codes WHERE user_id = $1
-        GROUP BY user_id;`,
-        [user_id]
-    );
-
-    return result.rows[0];
-}
+//#endregion
 
 
 module.exports = {
