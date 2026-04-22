@@ -34,8 +34,12 @@ class UserController {
         return UserController.handle(authService.getMe.bind(authService), req, res);
     }
 
-    static getAllUsers(req, res) {
-        return UserController.handle(authService.getAllUser.bind(authService), req, res);
+    static getList(req, res) {
+        return UserController.handle(authService.getList.bind(authService), req, res);
+    }
+
+    static getSpecific(req, res) {
+        return UserController.handle(authService.getSpecific.bind(authService), req, res);
     }
     
     /**

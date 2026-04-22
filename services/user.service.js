@@ -3,6 +3,7 @@ const crypto = require("crypto");
 const SibApiV3Sdk = require("sib-api-v3-sdk");
 const requestIp = require("request-ip");
 const AppError = require("../Error/AppError");
+const TableRequest = require("../models/TableRequest");
 const {
   getWebsiteConfiguration,
   createUser,
@@ -158,7 +159,7 @@ function getIpAddressAndUA(req) {
 // #endregion
 
 
-// #region Users
+
 /**
  * Retrieves all users from the database and removes sensitive fields
  * defined in the configuration (fields_to_clean).
@@ -166,28 +167,32 @@ function getIpAddressAndUA(req) {
  * @async
  * @returns {Promise<{ result: Object[], message: String }>}
  */
-async function getAllUser() {
-  // Fetch global configuration (contains fields to remove)
-  const config = await getWebsiteConfiguration();
+async function getList(req) {
+  const request = new TableRequest(req);
 
-  // Fallback to empty array if no fields are defined
-  const fields_to_clean = config.fields_to_clean || [];
+  if (request.table === "me") return await getMe(req);
 
-  const users = await getUsers();
-
-  // Remove sensitive fields from each user object
-  const newUsers = deletedPasswordFromDatas({ 
-    fields_to_clean,
-    users: [users],
-   });
+  const datas = await request.getList(false);
 
   return {
-    result: newUsers,
-    message: "Users fetched successfully"
+    result: datas.result,
+    message: "Datas fetched successfully",
   };
 }
 
+async function getSpecific(req) {
+  const request = new TableRequest(req);
 
+  const data = await request.getSpecific();
+
+  return {
+    result: data.result,
+    message: "Datas fetched successfully"
+  }
+}
+
+
+// #region Users
 /**
  * Retrieves the authenticated user from the Basic Auth header
  * 
@@ -202,57 +207,55 @@ async function getMe(req) {
 
   try {
     // Ensure the Authorization header is provided
-    if (!authHeader) {
+    if (!authHeader)
       throw new AppError("1080", "No authorization header proived!");
-    }
 
     // Split the header into scheme (e.g., "Basic") and encoded credentials
-    const [scheme, credentials] = authHeader.split(' ');
+    const [scheme, credentials] = authHeader.split(" ");
 
     // Validate that the format is "Basic <base64>"
-    if (scheme !== 'Basic' || !credentials) {
+    if (scheme !== "Basic" || !credentials)
       throw new AppError("1020", "Invalid authorizationn format");
-    }
 
     // Decode Base64 credentials into "email:password"
-    const decoded = Buffer.from(credentials, 'base64').toString('utf-8');
+    const decoded = Buffer.from(credentials, "base64").toString("utf-8");
 
     // Extract email and password from decoded string
-    const [email, password] = decoded.split(':');
+    const [email, password] = decoded.split(":");
 
     // Validate that both email and password are present
-    if (!email || !password) {
+    if (!email || !password)
       throw new AppError("1050", "Email or password missing in token");
-    }
 
-    // Retrieve user from database using email
-    const user = await findUserByEmail(email);
-    if (!user) {
-      throw new AppError("1060", "User not found");
-    } 
+    if (email.includes(",") || email.includes("|"))
+      throw new AppError("1050", "Invalid email format");
+
+    // Override table and filters to query users by email
+    const request = new TableRequest(req);
+    request.table = "users";
+    request.filters = [["email", "eq", email]];
+
+    const result = await request.getList(true);
+    console.log(result)
+
+    let user = result.result[0];
+
+    
+    if (!user) throw new AppError("1060", "User not found");
 
     // Check password
     const passwordMatch = await bcrypt.compare(password, user.password);
-    if (!passwordMatch) {
-      throw new AppError("1100", "Invalid credentials");
-    }
+    if (!passwordMatch) throw new AppError("1100", "Invalid credentials");
 
-    const config = await getWebsiteConfiguration();
-    const fields_to_clean = config.fields_to_clean || [];
-
-    // Remove sensitive data before returning the user object
-    const newUser = deletedPasswordFromDatas({ 
-      fields_to_clean,
-      users : [user],
-    });
+    const cleanedUsers = await request.deletedPasswordFromDatas([user]);
+    user = cleanedUsers[0];
 
     return {
-      result: newUser,
-      message: "User fetched successfully"
-    }
-
+      result: user,
+      message: "User fetched successfully",
+    };
   } catch (error) {
-    throw error;
+    throw new AppError("1200", error.message);
   }
 }
 //#endregion
@@ -326,7 +329,7 @@ async function loginUser(req) {
       throw new AppError("1100", "Invalid email or password")
     }
 
-    const base64Header = Buffer.from(email + ":" + password).toString("base64");
+    // const base64Header = Buffer.from(email + ":" + password).toString("base64");
     
     return {
       result: existingUser.id,
@@ -477,7 +480,7 @@ async function processAccountSecurityFlow(req, datas) {
  * @returns {Promise<{ result: Object, message: String }>}
  */
 async function verifyResetPassword(req) {
-  const { email, password } = req.body;
+  const { password } = req.body;
   const { token } = req.query;
   const { ip_address, user_agent } = getIpAddressAndUA(req);
 
@@ -493,7 +496,7 @@ async function verifyResetPassword(req) {
 
     // Update user password
     const user = await resetPassword({
-      email,
+      email: log.user_email,
       password: password_hash,
     });
 
@@ -668,7 +671,8 @@ async function verifyEmail(req) {
 
 
 module.exports = {
-  getAllUser,
+  getList,
+  getSpecific,
   registerUser,
   verifyEmail,
   verifyResetPassword,
