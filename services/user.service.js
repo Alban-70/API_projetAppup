@@ -3,29 +3,53 @@ const crypto = require("crypto");
 const SibApiV3Sdk = require("sib-api-v3-sdk");
 const requestIp = require("request-ip");
 const AppError = require("../Error/AppError");
+const parseRequest = require("../helpers/parseRequest.helper");
 const TableRequest = require("../models/TableRequest");
-const {
-  getWebsiteConfiguration,
-  createUser,
-  resetPassword,
-  findUserByEmail,
-  verifyUserEmail,
-  createLoginLogs,
-  findLoginLogByToken,
-  createAuthenticateCodes,
-  findA2FCodeByUserId,
-  findA2FCodeByCode,
-  findUserById,
-  countDailyResetPassword,
-  getUsers,
-  countLoginAttemptsEvery15min,
-} = require("../models/user.model");
 
 
 // #region Constants
 const A2F_COOLDOWN_SECONDS = 60;      // Minimum delay (in seconds) between two 2FA code requests to prevent abuse/spam.
 const DAILY_RESET_PASSWORD = 3;       // Maximum number of password reset requests allowed per user per day.
 const MAX_FAILED_LOGIN_ATTEMPT = 3;   // Maximum number of failed login attempts allowed every 15 minutes.
+//#endregion
+
+
+// #region Log Queries (Presets)
+
+/**
+ * Predefined log query templates used for analytics and security tracking
+ */
+const LOG_QUERIES = {
+  /**
+   * Count failed login attempts in last 15 minutes
+   * @param {String} email
+   */
+  loginAttempts(email) {
+    return {
+      filters: [
+        ["user_email", "eq", email],
+        ["password_type", "eq", "login"],
+        ["success", "eq", "false"],
+      ],
+      timeWindowMs: 15 * 60 * 1000,
+    };
+  },
+
+  /**
+   * Count successful password reset requests in last 24 hours
+   * @param {String} email
+   */
+  resetPassword(email) {
+    return {
+      filters: [
+        ["user_email", "eq", email],
+        ["password_type", "eq", "reset_password"],
+        ["success", "eq", "true"],
+      ],
+      timeWindowMs: 24 * 60 * 60 * 1000,
+    };
+  },
+};
 //#endregion
 
 
@@ -123,29 +147,6 @@ function checkGoodEmail(email) {
 
 
 /**
- * Removes sensitive fields from a list of user objects
- * @param {{ fields_to_clean: String[], users: Object[] }} datas - The data to clean
- * @returns {Object[]} - The cleaned list of users
- */
-function deletedPasswordFromDatas(datas) {
-  const { fields_to_clean, users } = datas;
-
-  const newUsers = users.map(user => {
-    const cleaned = { ...user };
-
-    // Delete each field listed in configuration
-    fields_to_clean.forEach(field => {
-      delete cleaned[field];
-    });
-
-    return cleaned;
-  });
-
-  return newUsers;
-}
-
-
-/**
  * Extracts IP address and User-Agent from request
  * @param {import("express").Request} req
  * @returns {{ ip_address: String, user_agent: String }}
@@ -160,108 +161,242 @@ function getIpAddressAndUA(req) {
 
 
 
+
+//#region Authentification
 /**
- * Retrieves all users from the database and removes sensitive fields
- * defined in the configuration (fields_to_clean).
- * 
- * @async
- * @returns {Promise<{ result: Object[], message: String }>}
+ * Extract Basic Auth header
  */
-async function getList(req) {
-  const request = new TableRequest(req);
+function extractBasicAuth(req) {
+  const authHeader = req.headers["authorization"];
 
-  if (request.table === "me") return await getMe(req);
+  if (!authHeader)
+    throw new AppError("1080", "No authorization header provided!");
 
-  const datas = await request.getList(false);
+  const [scheme, credentials] = authHeader.split(" ");
 
-  return {
-    result: datas.result,
-    message: "Datas fetched successfully",
-  };
-}
+  if (scheme !== "Basic" || !credentials)
+    throw new AppError("1020", "Invalid authorization format");
 
-async function getSpecific(req) {
-  const request = new TableRequest(req);
+  const decoded = Buffer.from(credentials, "base64").toString("utf-8");
+  const [email, password] = decoded.split(":");
 
-  const data = await request.getSpecific();
+  if (!email || !password)
+    throw new AppError("1050", "Missing credentials");
 
-  return {
-    result: data.result,
-    message: "Datas fetched successfully"
-  }
+  return { email, password };
 }
 
 
-// #region Users
 /**
- * Retrieves the authenticated user from the Basic Auth header
+ * Core authentication workflow handling:
+ * - user registration
+ * - password reset request
+ * - email sending
+ * - security logging
  * 
  * @async
  * @param {import("express").Request} req
+ * @param {{ isCreatingUser: Boolean, email_subject: String, email_content: Function }} datas
  * @returns {Promise<{ result: Object, message: String }>}
- * @throws {AppError}
+ * @throws {Error}
  */
-async function getMe(req) {
-  // Retrieve the Authorization header from the incoming request
-  const authHeader = req.headers['authorization'];
+async function processAccountSecurityFlow(req, datas) {
+  const { email, password, uuid, ...rest } = req.body;
+  const { isCreatingUser, email_subject, email_content } = datas;
+  const { ip_address, user_agent } = getIpAddressAndUA(req);
+
+  let success = false;
+
+  // Secure token used for email verification or password reset
+  let token = crypto.randomBytes(32).toString("hex");
+
+  let newUser = null;
+  let code = null;
+  let expires_at = null;
+  let existingUser = null;
+
+  const request = new TableRequest();
 
   try {
-    // Ensure the Authorization header is provided
-    if (!authHeader)
-      throw new AppError("1080", "No authorization header proived!");
+    const config = await request.getWebsiteConfiguration();    
+    if (!config) 
+      throw new AppError("1060", "Website config not found!");
 
-    // Split the header into scheme (e.g., "Basic") and encoded credentials
-    const [scheme, credentials] = authHeader.split(" ");
+    const existingUserResult = await getUserByEmail(email);
+    existingUser = existingUserResult.result[0] ?? null;
 
-    // Validate that the format is "Basic <base64>"
-    if (scheme !== "Basic" || !credentials)
-      throw new AppError("1020", "Invalid authorizationn format");
 
-    // Decode Base64 credentials into "email:password"
-    const decoded = Buffer.from(credentials, "base64").toString("utf-8");
+    // Prevent duplicate account creation
+    if (isCreatingUser && existingUser)
+      throw new AppError("1010", "User already exists!");
 
-    // Extract email and password from decoded string
-    const [email, password] = decoded.split(":");
 
-    // Validate that both email and password are present
-    if (!email || !password)
-      throw new AppError("1050", "Email or password missing in token");
+    // Ensure user exists for password reset flow
+    if (!isCreatingUser && !existingUser) 
+      throw new AppError("1060", "User not found!");
 
-    if (email.includes(",") || email.includes("|"))
-      throw new AppError("1050", "Invalid email format");
 
-    // Override table and filters to query users by email
-    const request = new TableRequest(req);
-    request.table = "users";
-    request.filters = [["email", "eq", email]];
+    if (!isCreatingUser) {
+      const dailyCount = await countDailyResetPassword(email);
+      if (dailyCount >= DAILY_RESET_PASSWORD)
+        throw new AppError("1070", "You have reached the maximum number of password reset requests for today. Please try again tomorrow.")
+    }
 
-    const result = await request.getList(true);
-    console.log(result)
+    const emailCheck = checkGoodEmail(email);
+    if (!emailCheck.isGoodEmail) 
+      throw new AppError(emailCheck.status, emailCheck.message);
 
-    let user = result.result[0];
+    expires_at = new Date(Date.now() + Number(process.env.TIME_TOKEN_EXPIRES));
 
+    if (isCreatingUser) {
+      const passwordCheck = checkGoodPassword(password);
+      if (!passwordCheck.isGoodPassword)
+        throw new AppError(passwordCheck.status, passwordCheck.message);
+
+      // Hash password before saving it to database
+      const password_hash = await bcrypt.hash(password, 10);
+
+      const newUserResult = await request.postData({
+        table: "users",
+        body: {
+          email,
+          password: password_hash,
+          ...rest,
+        },
+      });
+      newUser = newUserResult.result;
+
+      if (!newUser) 
+        throw new AppError("1110", "User not created");
+
+      const lastCodeResult = await request.getList({
+        table: "authenticate_codes",
+        filters: [
+          ["user_id", "eq", newUser.id]
+        ],
+        orderBy: "created_dt",
+        orderDir: "DESC",
+        isMe: true,
+      });
+      const lastCode = lastCodeResult.result[0] ?? null;
+      if (lastCode) {
+        const secondesElapsed = (Date.now() - new Date(lastCode.created_dt)) / 1000;
+        if (secondesElapsed < A2F_COOLDOWN_SECONDS) {
+          const remaining = Math.ceil(A2F_COOLDOWN_SECONDS - secondesElapsed);
+          throw new AppError("1090", `Please wait ${remaining}s before requesting a new code.`);
+        }
+      }
+
+      code = generateA2FCode(config.two_factor_authenticator_length); 
+
+      await request.postData({
+        table: "authenticate_codes",
+        body: {
+          user_id: newUser.id,
+          code,
+          expires_at,
+        },
+      });
+    }
+
+    // Send email depending on flow (register or reset password)
+    await sendEmail({
+      email: isCreatingUser ? newUser.email : email,
+      subject: email_subject,
+      content: email_content(isCreatingUser ? code : token),
+    });
     
-    if (!user) throw new AppError("1060", "User not found");
+    // Remove sensitive data before returning the user object
+    const userCreated = await request.deletedPasswordFromDatas([newUser]);
 
-    // Check password
-    const passwordMatch = await bcrypt.compare(password, user.password);
-    if (!passwordMatch) throw new AppError("1100", "Invalid credentials");
-
-    const cleanedUsers = await request.deletedPasswordFromDatas([user]);
-    user = cleanedUsers[0];
-
+    success = true;
     return {
-      result: user,
-      message: "User fetched successfully",
+      result: userCreated,
+      message: isCreatingUser
+        ? "User created"
+        : "A password reset email has been sent",
     };
-  } catch (error) {
-    throw new AppError("1200", error.message);
+  } finally {
+    // Always log authentication attempts for audit/security purposes
+    await request.postData({
+      table: "login_logs",
+      body: {
+        ip_address,
+        user_agent,
+        success,
+        token: isCreatingUser ? null : token,
+        user_email: email ?? null,
+        password_type: isCreatingUser ? "register" : "reset_password",
+      },
+    });
   }
 }
-//#endregion
 
 
-// #region Authentication
+/**
+ * Authenticates a user with email and password
+ * 
+ * @async
+ * @param {import("express").Request} req
+ * @returns {Promise<{ result: Number, message: String }>}
+ * @throws {AppError}
+ */
+async function loginUser(req) {
+  const { email, password } = req.body;
+  const { ip_address, user_agent } = getIpAddressAndUA(req);
+
+  let numberOfLoginAttempt =  0;
+  let success = true;
+  let existingUser = null
+
+  const request = new TableRequest();
+
+  try {
+    const existingUserResult = await getUserByEmail(email);
+    existingUser = existingUserResult.result[0] ?? null;
+
+    if (!existingUser)
+      throw new AppError("1060", "There is no user with this email!");
+
+    numberOfLoginAttempt = await countLoginAttemptsEvery15min(email);
+
+    if (numberOfLoginAttempt > MAX_FAILED_LOGIN_ATTEMPT) 
+      throw new AppError("1070", "You have reached the maximum number of login attempt for today. Please try again in 15 minutes.");
+
+    const passwordMatch = await bcrypt.compare(password, existingUser.password);
+    if (!passwordMatch) {
+      success = false;
+      throw new AppError("1100", "Invalid email or password")
+    }
+
+    // const base64Header = Buffer.from(email + ":" + password).toString("base64");
+    let message = "User successfully logged in";
+  
+
+    if (!existingUser.email_verified)
+      message += " but his mail is not verified";
+
+    return {
+      result: existingUser.id,
+      message: message
+    }
+
+  } finally {
+    await request.postData({
+      table: "login_logs",
+      body: {
+        ip_address,
+        user_agent,
+        success,
+        token: null,
+        user_email: existingUser ? existingUser.email : null,
+        password_type: "login",
+      },
+    });
+  }
+}
+
+
 /**
  * Registers a new user
  * 
@@ -299,273 +434,43 @@ async function registerUser(req) {
 
 
 /**
- * Authenticates a user with email and password
+ * Retrieves the authenticated user from the Basic Auth header
  * 
  * @async
  * @param {import("express").Request} req
- * @returns {Promise<{ result: Number, message: String }>}
+ * @returns {Promise<{ result: Object, message: String }>}
  * @throws {AppError}
  */
-async function loginUser(req) {
-  const { email, password } = req.body;
-  const { ip_address, user_agent } = getIpAddressAndUA(req);
-  let numberOfLoginAttempt =  0;
-  let success = true;
+async function getMe(req) {
 
   try {
-    const existingUser = await findUserByEmail(email);
-
-    if (!existingUser)
-      throw new AppError("1060", "There is no user with this email!");
-
-    numberOfLoginAttempt = await countLoginAttemptsEvery15min(email);
-
-    if (numberOfLoginAttempt > MAX_FAILED_LOGIN_ATTEMPT) 
-      throw new AppError("1070", "You have reached the maximum number of login attempt for today. Please try again in 15 minutes.");
-
-    const passwordMatch = await bcrypt.compare(password, existingUser.password);
-    if (!passwordMatch) {
-      success = false;
-      throw new AppError("1100", "Invalid email or password")
-    }
-
-    // const base64Header = Buffer.from(email + ":" + password).toString("base64");
+    const { email, password } = extractBasicAuth(req);
     
+    const request = new TableRequest();
+    const result = await request.getList({
+      table: "users",
+      filters: [["email", "eq", email]],
+      isMe: true,
+    });
+
+    const user = result.result[0];
+    if (!user) throw new AppError("1060", "User not found");
+
+    // Check password
+    const passwordMatch = await bcrypt.compare(password, user.password);
+    if (!passwordMatch) throw new AppError("1100", "Invalid credentials");
+
+
+    const cleanedUsers = await request.deletedPasswordFromDatas([user]);
+
     return {
-      result: existingUser.id,
-      message: "User successfully logged in"
-    }
-
-  } finally {
-    await createLoginLogs({
-      ip_address,
-      user_agent,
-      success,
-      token: null,
-      user_email: email,
-      password_type: "login"
-    });
-  }
-}
-
-
-/**
- * Core authentication workflow handling:
- * - user registration
- * - password reset request
- * - email sending
- * - security logging
- * 
- * @async
- * @param {import("express").Request} req
- * @param {{ isCreatingUser: Boolean, email_subject: String, email_content: Function }} datas
- * @returns {Promise<{ result: Object, message: String }>}
- * @throws {Error}
- */
-async function processAccountSecurityFlow(req, datas) {
-  const { email, password } = req.body;
-  const { isCreatingUser, email_subject, email_content } = datas;
-  const { ip_address, user_agent } = getIpAddressAndUA(req);
-
-  let success = false;
-
-  // Secure token used for email verification or password reset
-  let token = crypto.randomBytes(32).toString("hex");
-
-  let newUser = null;
-  let code = null;
-  let expires_at = null;
-
-  try {
-    const config = await getWebsiteConfiguration();
-    if (!config) 
-      throw new AppError("1060", "Website config not found!");
-
-
-    const existingUser = await findUserByEmail(email);
-
-    // Prevent duplicate account creation
-    if (isCreatingUser && existingUser)
-      throw new AppError("1010", "User already exists!");
-
-    // Ensure user exists for password reset flow
-    if (!isCreatingUser && !existingUser) 
-      throw new AppError("1060", "User not found!");
-
-    if (!isCreatingUser) {
-      const dailyCount = await countDailyResetPassword(email);
-      if (dailyCount >= DAILY_RESET_PASSWORD)
-        throw new AppError("1070", "You have reached the maximum number of password reset requests for today. Please try again tomorrow.")
-    }
-
-    const emailCheck = checkGoodEmail(email);
-    if (!emailCheck.isGoodEmail) 
-      throw new AppError(emailCheck.status, emailCheck.message);
-
-    expires_at = new Date(Date.now() + Number(process.env.TIME_TOKEN_EXPIRES));
-
-    if (isCreatingUser) {
-      const passwordCheck = checkGoodPassword(password);
-      if (!passwordCheck.isGoodPassword)
-        throw new AppError(passwordCheck.status, passwordCheck.message);
-
-      // Hash password before saving it to database
-      const password_hash = await bcrypt.hash(password, 10);
-      
-      newUser = await createUser({
-        email: email,
-        password: password_hash,
-      });
-
-      const lastCode = await findA2FCodeByUserId(newUser.id);
-      if (lastCode) {
-        const secondesElapsed = (Date.now() - new Date(lastCode.created_dt)) / 1000;
-        if (secondesElapsed < A2F_COOLDOWN_SECONDS) {
-          const remaining = Math.ceil(A2F_COOLDOWN_SECONDS - secondesElapsed);
-          throw new AppError("1090", `Please wait ${remaining}s before requesting a new code.`);
-        }
-      }
-
-      code = generateA2FCode(config.two_factor_authenticator_length); 
-      await createAuthenticateCodes({
-        user_id: newUser.id,
-        code,
-        expires_at
-      });
-    }
-
-    // Send email depending on flow (register or reset password)
-    await sendEmail({
-      email: isCreatingUser ? newUser.email : email,
-      subject: email_subject,
-      content: email_content(isCreatingUser ? code : token),
-    });
-
-    const fields_to_clean = config.fields_to_clean || [];
-
-    // Remove sensitive data before returning the user object
-    const userCreated = deletedPasswordFromDatas({ 
-      fields_to_clean,
-      users: [newUser],
-    });
-
-    success = true;
-    return {
-      result: userCreated,
-      message: isCreatingUser
-        ? "User created"
-        : "A password reset email has been sent",
+      result: cleanedUsers[0],
+      message: "User fetched successfully",
     };
-  } finally {
-    // Always log authentication attempts for audit/security purposes
-    await createLoginLogs({
-      ip_address,
-      user_agent,
-      success,
-      token: isCreatingUser ? null : token,
-      user_email: email,
-      password_type: isCreatingUser ? "register" : "reset_password",
-    });
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    throw new AppError("1200", err.message);
   }
-}
-//#endregion
-
-
-// #region Password
-/**
- * Handles password reset using token verification
- * 
- * @async
- * @param {import("express").Request} req
- * @returns {Promise<{ result: Object, message: String }>}
- */
-async function verifyResetPassword(req) {
-  const { password } = req.body;
-  const { token } = req.query;
-  const { ip_address, user_agent } = getIpAddressAndUA(req);
-
-  let success = false;
-  let log = null;
-
-  try {
-    // Shared token validation logic
-    log = await validateTokenOrThrow(token);
-
-    // Hash new password securely before saving
-    const password_hash = await bcrypt.hash(password, 10);
-
-    // Update user password
-    const user = await resetPassword({
-      email: log.user_email,
-      password: password_hash,
-    });
-
-    success = true;
-    return {
-      result: user,
-      message: "Password has been successfully reset",
-    };
-  } finally {
-    // Audit log for security tracking
-    await createLoginLogs({
-      ip_address,
-      user_agent,
-      success,
-      token,
-      user_email: log ? log.user_email : null,
-      password_type: "reset_password",
-    });
-  }
-}
-
-
-/**
- * Sends password reset email
- * 
- * @async
- * @param {import("express").Request} req
- */
-async function sendPasswordResetEmail(req) {
-  return await processAccountSecurityFlow(req, {
-    isCreatingUser: false,
-    email_subject: "Reset your password",
-    email_content: (token) => `
-      <a href="${process.env.LINK_FRONT}/reset-password?token=${token}">
-        Reset password
-      </a>
-    `,
-  });
-}
-
-
-/**
- * Validates a login token and returns the associated log entry.
- * Used for password reset flows.
- *
- * @async
- * @param {string} token
- * @returns {Promise<Object>}
- * @throws {Error}
- */
-async function validateTokenOrThrow(token) {
-  if (!token) {
-      throw new AppError("1050", "Token is missing!");
-  }
-
-  // Fetch token record from database
-  const log = await findLoginLogByToken(token);
-  if (!log) {
-    throw new AppError("1020", "Token is invalid!");
-  }
-
-  // Check expiration (security constraint)
-  const isExpired = new Date() > new Date(log.expires_at);
-
-  if (isExpired) {
-    throw new AppError("1030", "Token is expired!");
-  }
-
-  return log;
 }
 //#endregion
 
@@ -609,6 +514,116 @@ async function sendEmail(user) {
 //#endregion
 
 
+//#region Password flow
+/**
+ * Handles password reset using token verification
+ * 
+ * @async
+ * @param {import("express").Request} req
+ * @returns {Promise<{ result: Object, message: String }>}
+ */
+async function verifyResetPassword(req) {
+  const { password } = req.body;
+  const { token } = req.query;
+  const { ip_address, user_agent } = getIpAddressAndUA(req);
+
+  let success = false;
+  let log = null;
+
+  const request = new TableRequest();
+
+  try {
+    // Shared token validation logic
+    log = await validateTokenOrThrow(request, token);
+
+    // Hash new password securely before saving
+    const password_hash = await bcrypt.hash(password, 10);
+
+    // Update user password
+    const user = await request.putData({
+      table: "users",
+      filters: [["email", "eq", log[0].user_email]],
+      body: {
+        email: log[0].user_email,
+        password: password_hash,
+      },
+    });
+
+    success = true;
+    return {
+      result: user.result,
+      message: "Password has been successfully reset",
+    };
+  } finally {
+    // Audit log for security tracking
+    await request.postData({
+      table: "login_logs",
+      body: {
+        ip_address,
+        user_agent,
+        success,
+        user_email: log ? log.user_email : null,
+        password_type: "reset_password",
+      },
+    });
+  }
+}
+
+
+/**
+ * Sends password reset email
+ * 
+ * @async
+ * @param {import("express").Request} req
+ */
+async function sendPasswordResetEmail(req) {
+  return await processAccountSecurityFlow(req, {
+    isCreatingUser: false,
+    email_subject: "Reset your password",
+    email_content: (token) => `
+      <a href="${process.env.LINK_FRONT}/reset-password?token=${token}">
+        Reset password
+      </a>
+    `,
+  });
+}
+
+
+/**
+ * Validates a login token and returns the associated log entry.
+ * Used for password reset flows.
+ *
+ * @async
+ * @param {string} token
+ * @returns {Promise<Object>}
+ * @throws {Error}
+ */
+async function validateTokenOrThrow(request, token) {
+  if (!token) {
+      throw new AppError("1050", "Token is missing!");
+  }
+
+  // Fetch token record from database
+  const log = await request.getList({
+    table: "login_logs",
+    fields: ["id", "user_email", "created_dt"],
+    filters: [["token", "eq", token]]
+  });
+
+  const logEntry = log.result[0];
+  if (!logEntry) throw new AppError("1020", "Token is invalid!");
+
+
+  // Check expiration (security constraint)
+  const isExpired = new Date() > new Date(logEntry.expires_at);
+
+  if (isExpired) throw new AppError("1030", "Token is expired!");
+
+  return log.result;
+}
+//#endregion
+
+
 // #region Email Verification
 /**
  * Verifies user email using token (account activation flow)
@@ -625,13 +640,20 @@ async function verifyEmail(req) {
   let authenticateCode = null;
   let mailUser = null;
 
+  const request = new TableRequest();
+
   try {
     if (!code) {
       throw new AppError("1050", "Code is missing");
     }
 
     // Fetch code record from database
-    authenticateCode = await findA2FCodeByCode(code);
+    const authenticateCodeResult = await request.getList({
+      table: "authenticate_codes",
+      filters: [["code", "eq", code]],
+      isMe: false,
+    });
+    authenticateCode = authenticateCodeResult.result[0] ?? null;
     if (!authenticateCode) {
       throw new AppError("1040", "Code is invalid!");
     }
@@ -642,32 +664,142 @@ async function verifyEmail(req) {
     }
 
     // Activate user account
-    const user = await verifyUserEmail(authenticateCode.user_id);
+    const user = await request.putData({
+      table: "users",
+      id: authenticateCode.user_id,
+      body: {
+        email_verified: true,
+      },
+      isMe: true,
+    });
 
-    const userFound = await findUserById(authenticateCode.user_id);
-    if (!userFound) {
-      throw new AppError("1060", "User not found");
-    }
-
-    mailUser = userFound.email;
+    mailUser = user.result.email;
 
     success = true;
     return {
-      result: user,
+      result: user.result,
       message: "Email verified successfully",
     };
   } finally {
     // Audit log for security tracking
-    await createLoginLogs({
-      ip_address,
-      user_agent,
-      success,
-      user_email: mailUser,
-      password_type: "verify_email",
+    await request.postData({
+      table: "login_logs",
+      body: {
+        ip_address,
+        user_agent,
+        success,
+        user_email: mailUser,
+        password_type: "verify_email",
+      },
     });
   }
 }
 //#endregion
+
+
+// #region Log Counter
+async function countLogs(query) {
+  const request = new TableRequest();
+
+  const filters = [...(query.filters || [])];
+
+  if (query.timeWindowMs) {
+    const dateLimit = new Date(Date.now() - query.timeWindowMs);
+    filters.push(["created_dt", "gte", dateLimit]);
+  }
+
+  const data = await request.getCount({
+    table: "login_logs",
+    fields: ["id"],
+    filters,
+  });
+  return data.result.rows[0].count;
+}
+
+
+async function countLoginAttemptsEvery15min(email) {
+  return countLogs(LOG_QUERIES.loginAttempts(email));
+}
+
+
+async function countDailyResetPassword(email) {
+  return countLogs(LOG_QUERIES.resetPassword(email));
+}
+//#endregion
+
+
+// #region Data access layer (generic queries)
+/**
+ * Get list of records from a table (generic query handler)
+ *
+ * @async
+ * @param {import("express").Request} req
+ * @returns {Promise<{ result: Object[], message: String }>}
+ */
+async function getList(req) {
+  const { table, fields, filters, orderBy, orderDir } = parseRequest(req);
+  
+  const request = new TableRequest();
+  const result = await request.getList({
+    table, 
+    fields, 
+    filters,
+    orderBy,
+    orderDir,
+  });
+
+  return {
+    result: result.result,
+    message: "Datas fetched successfully",
+  };
+}
+
+
+/**
+ * Get specific record(s) from a table
+ *
+ * @async
+ * @param {import("express").Request} req
+ * @returns {Promise<{ result: Object, message: String }>}
+ */
+async function getSpecific(req) {
+  const { table, id, fields, filters, orderBy, orderDir } = parseRequest(req);
+
+  const request = new TableRequest();
+  const result = await request.getSpecific({
+    table,
+    id,
+    fields,
+    filters,
+    orderBy,
+    orderDir,
+  });
+
+  return {
+    result: result.result,
+    message: "Datas fetched successfully",
+  };
+}
+
+
+/**
+ * Get user by email (internal helper)
+ *
+ * @async
+ * @param {String} email
+ * @returns {Promise<{ result: Object[] }>}
+ */
+async function getUserByEmail(email) {
+  const request = new TableRequest();
+
+  return request.getList({
+    table: "users",
+    filters: [["email", "eq", email]],
+    isMe: true,
+  });
+}
+// #endregion
+
 
 
 module.exports = {
@@ -679,4 +811,6 @@ module.exports = {
   sendPasswordResetEmail,
   loginUser,
   getMe,
+  extractBasicAuth, 
+  getUserByEmail,
 };

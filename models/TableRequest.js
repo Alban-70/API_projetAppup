@@ -2,38 +2,14 @@ const pool = require("../database/db");
 const AppError = require("../Error/AppError");
 
 class TableRequest {
-  /**
-   * Parses the request to extract table name, id, fields, filters and body
-   */
-  constructor(req) {
-    const parts = req.path.split("/").filter(Boolean);
-
-    this.table = parts[0];
-    this.id = parts[1] ?? null;
-
-    if (this.id && isNaN(this.id))
-      throw new AppError("1050", "Invalid id format");
-
-    this.count = req.query.count === "true";
-    this.fields = req.query.fields?.split(",") || ["*"];
-    this.filters = req.query.filters
-      ? req.query.filters
-          .split("|")
-          .map((f) => f.split(","))
-      : [];
-
-    this.body = req.body;
-  }
 
   //#region Config
   /**
    * Fetches the website configuration from the database
    * @returns {Promise<Object>}
    */
-  async #getWebsiteConfiguration() {
-    const result = await pool.query(
-      `SELECT fields_to_clean FROM configuration LIMIT 1`,
-    );
+  async getWebsiteConfiguration() {
+    const result = await pool.query(`SELECT * FROM configuration LIMIT 1`);
     return result.rows[0];
   }
 
@@ -43,7 +19,7 @@ class TableRequest {
    * @returns {Promise<Object[]>}
    */
   async deletedPasswordFromDatas(users) {
-    const config = await this.#getWebsiteConfiguration();
+    const config = await this.getWebsiteConfiguration();
     const fields_to_clean = config?.fields_to_clean || [];
 
     const newUsers = users.map((user) => {
@@ -62,22 +38,22 @@ class TableRequest {
   //#endregion
 
   //#region DB Verification
-  async #tableExists() {
+  async #tableExists(table) {
     const result = await pool.query(
       `SELECT EXISTS (
 				SELECT 1 FROM information_schema.tables
 				WHERE table_name = $1
 			)`,
-      [this.table],
+      [table],
     );
     return result.rows[0].exists;
   }
 
-  async #columnsExist(columns) {
+  async #columnsExist(table, columns) {
     const result = await pool.query(
       `SELECT column_name FROM information_schema.columns
 			WHERE table_name = $1;`,
-      [this.table],
+      [table],
     );
 
     const existing_columns = result.rows.map((r) => r.column_name);
@@ -87,31 +63,33 @@ class TableRequest {
     return invalid_columns;
   }
 
-  async #getRequiredColumns() {
+  async #getRequiredColumns(table) {
     const result = await pool.query(
       `SELECT column_name FROM information_schema.columns
 			WHERE table_name = $1
 			AND is_nullable = 'NO'
 			AND column_default IS NULL;`,
-      [this.table],
+      [table],
     );
 
     return result.rows.map((r) => r.column_name);
   }
 
-  async #validate() {
-    const tableExists = await this.#tableExists();
+  async #validate(table, fields = [], filters = []) {
+    const tableExists = await this.#tableExists(table);
     if (!tableExists)
-      throw new AppError("1060", `Table ${this.table} not found`);
+      throw new AppError("1060", `Table ${table} not found`);
 
-    const fieldsToCheck = this.fields.filter((f) => f !== "*");
     // Extract only the column name (first element) from each filter group [col, op, val]
-    const filtersCols = this.filters.map(([col]) => col);
+    const filtersCols = filters.map(([col]) => col);
+
+    const fieldsToCheck = fields.filter((f) => f !== "*");
+
     // Merge fields and filter columns into a single array, removing duplicates with Set
     const allCols = [...new Set([...fieldsToCheck, ...filtersCols])];
 
     if (allCols.length > 0) {
-      const invalidCols = await this.#columnsExist(allCols);
+      const invalidCols = await this.#columnsExist(table, allCols);
       if (invalidCols.length > 0) {
         throw new AppError(
           "1040",
@@ -123,10 +101,6 @@ class TableRequest {
   //#endregion
 
   //#region Operators
-  #getFields() {
-    return this.fields.join(", ") || "*";
-  }
-
   /**
    * Converts a shorthand operator key to its SQL equivalent
    * @param {String} operatorType
@@ -155,11 +129,11 @@ class TableRequest {
    * Builds SQL WHERE conditions and values from the filters array
    * @returns {{ conditions: String[], values: any[] }}
    */
-  buildConditions() {
+  buildConditions(filters = []) {
     const values = [];
     const conditions = [];
 
-    for (const filter of this.filters) {
+    for (const filter of filters) {
       const [col, op, val] = filter;
       const operator = this.#toSqlOperator(op);
 
@@ -182,29 +156,38 @@ class TableRequest {
    * Returns all rows from the table, with optional fields and filters
    * @returns {Promise<void>}
    */
-  async getList(isMe) {
+  async getList({
+    table,
+    fields = ["*"],
+    filters = [],
+    orderBy = null,
+    orderDir = "ASC",
+    isMe = false,
+  } = {}) {
     try {
-      await this.#validate();
+      await this.#validate(table, fields, filters);
 
-      let fields = this.#getFields();
-      let query = `SELECT ${fields} FROM ${this.table}`;
+      const fieldStr = fields.join(", ") || "*";
+      let query = `SELECT ${fieldStr} FROM ${table}`;
 
-      const { conditions, values } = this.buildConditions();
+      const { conditions, values } = this.buildConditions(filters);
 
       if (conditions.length > 0) query += ` WHERE ${conditions.join(" AND ")}`;
 
+      if (orderBy) query += ` ORDER BY ${orderBy} ${orderDir}`;
+
       const result = await pool.query(query, values);
 
-			let cleaned = result.rows;
-			if (!isMe) {
-      	cleaned = await this.deletedPasswordFromDatas(result.rows);
-			}
-			
+      let cleaned = result.rows;
+      if (!isMe) {
+        cleaned = await this.deletedPasswordFromDatas(result.rows);
+      }
 
       return {
         result: cleaned,
       };
     } catch (err) {
+      if (err instanceof AppError) throw err;
       throw new AppError("1200", err.message);
     }
   }
@@ -213,36 +196,26 @@ class TableRequest {
    * Returns a single row by id, with optional fields and filters
    * @returns {Promise<void>}
    */
-  async getSpecific() {
+  async getSpecific({ table, id, fields = ["*"], filters = [], orderBy = null, orderDir = "ASC", isMe = false } = {}) {
     try {
-      await this.#validate();
+      await this.#validate(table, fields, filters);
 
-      const useHeader = this.headers?.authorization;
+      if (id && isNaN(id))
+        throw new AppError("1050", "Invalid id format");
 
-      let query = `SELECT ${this.#getFields()} FROM ${this.table}`;
+      const fieldStr = fields.join(", ") || "*";
+      let query = `SELECT ${fieldStr} FROM ${table}`;
       const values = [];
 
-      if (this.id) {
+
+      if (id) {
         query += ` WHERE id = $1`;
-        values.push(this.id);
+        values.push(id);
+      } else {
+        throw new AppError("1050", "No id provided");
       }
 
-      else if (useHeader) {
-        const email = this._extractEmailFromHeader?.(useHeader);
-
-        if (!email) {
-          throw new AppError("1050", "Invalid header authentication");
-        }
-
-        query += ` WHERE email = $1`;
-        values.push(email);
-      }
-
-      else {
-        throw new AppError("1050", "No id or valid header provided");
-      }
-
-      const { conditions, values: filterValues } = this.buildConditions();
+      const { conditions, values: filterValues } = this.buildConditions(filters);
 
       let offset = values.length;
 
@@ -253,16 +226,26 @@ class TableRequest {
 
       values.push(...filterValues);
 
+      if (orderBy) query += ` ORDER BY ${orderBy} ${orderDir}`;
+
       const result = await pool.query(query, values);
 
       if (result.rows.length === 0) throw new AppError("1060", "Not found");
 
-      const cleaned = !useHeader ? await this.deletedPasswordFromDatas(result.rows) : result;
+      let cleaned;
+
+      if (!isMe) {
+        const cleanedRows = await this.deletedPasswordFromDatas(result.rows);
+        cleaned = cleanedRows;
+      } else {
+        cleaned = result.rows;
+      }
 
       return {
         result: cleaned[0],
       };
     } catch (err) {
+      if (err instanceof AppError) throw err;
       throw new AppError("1200", err.message);
     }
   }
@@ -271,13 +254,13 @@ class TableRequest {
    * Returns the total count of rows matching the filters
    * @returns {Promise<void>}
    */
-  async getCount() {
+  async getCount({ table, fields = ["*"], filters = [] } = {}) {
     try {
-      await this.#validate();
+      await this.#validate(table, [], filters);
 
-      let query = `SELECT COUNT(*) FROM ${this.table}`;
+      let query = `SELECT COUNT(${fields}) FROM ${table}`;
 
-      const { conditions, values } = this.buildConditions();
+      const { conditions, values } = this.buildConditions(filters);
 
       if (conditions.length > 0) query += ` WHERE ${conditions.join(" AND ")}`;
 
@@ -287,34 +270,35 @@ class TableRequest {
         result,
       };
     } catch (err) {
+      if (err instanceof AppError) throw err;
       throw new AppError("1200", err.message);
     }
   }
   //#endregion
 
   //#region POST Queries
-  async #checkIfDatasAlreadyExist(fields) {
-    const keys = Object.keys(fields);
-    const values = Object.values(fields);
+  async #checkIfDatasAlreadyExist(table, body) {
+    const keys = Object.keys(body);
+    const values = Object.values(body);
 
     const conditions = keys.map((key, i) => `${key} = $${i + 1}`).join(" AND ");
 
-    const query = `SELECT EXISTS (SELECT 1 FROM ${this.table} WHERE ${conditions})`;
+    const query = `SELECT EXISTS (SELECT 1 FROM ${table} WHERE ${conditions})`;
     const result = await pool.query(query, values);
 
     // True of false
     return result.rows[0].exists;
   }
 
-  async postData() {
+  async postData({ table, body = {} } = {}) {
     try {
-      await this.#validate();
+      await this.#validate(table, [], []);
 
       // Vérifier si les valeurs sont déja présentes
 
-      const requiredColmuns = await this.#getRequiredColumns();
+      const requiredColmuns = await this.#getRequiredColumns(table);
       const missingFields = requiredColmuns.filter(
-        (col) => !(col in this.body),
+        (col) => !(col in body),
       );
 
       if (missingFields.length > 0)
@@ -323,14 +307,14 @@ class TableRequest {
           `Missing required fields : ${missingFields.join(", ")}`,
         );
 
-      const alreadyExists = await this.#checkIfDatasAlreadyExist(this.body);
+      const alreadyExists = await this.#checkIfDatasAlreadyExist(table, body);
       if (alreadyExists) throw new AppError("1010", "Datas already exist");
 
-      const keys = Object.keys(this.body);
-      const values = Object.values(this.body);
+      const keys = Object.keys(body);
+      const values = Object.values(body);
       const indexes = keys.map((_, i) => `$${i + 1}`).join(", ");
 
-      const query = `INSERT INTO ${this.table} (${keys.join(", ")}) VALUES (${indexes}) RETURNING *;`;
+      const query = `INSERT INTO ${table} (${keys.join(", ")}) VALUES (${indexes}) RETURNING *;`;
 
       const result = await pool.query(query, values);
 
@@ -338,13 +322,74 @@ class TableRequest {
         result: result.rows[0],
       };
     } catch (err) {
+      if (err instanceof AppError) throw err;
       throw new AppError("1200", err.message);
     }
   }
   //#endregion
 
   //#region PUT QUERIES
+  async putData({ table, id, filters = [], body = {}, isMe = false } = {}) {
+    try {
+      await this.#validate(table, [], filters);
 
+      if (!id && filters.length === 0)
+        throw new AppError("1050", "No id or filters provided");
+
+      const keys = Object.keys(body);
+      const values = Object.values(body);
+
+      // Build SET clause: name = $1, email = $2, ...
+      const setClause = keys.map((key, i) => `${key} = $${i + 1}`).join(", ");
+
+      let query = `UPDATE ${table} SET ${setClause}`;
+      let offset = values.length;
+
+      if (id) {
+        offset++;
+        query += ` WHERE id = $${offset}`;
+        values.push(id);
+      }
+
+      if (!id && filters.length > 0) {
+        const { conditions, values: filterValues } = this.buildConditions(filters);
+
+        for (const condition of conditions) {
+          offset++;
+          query += ` WHERE ${condition.replace(/\$\d+/, `$${offset}`)}`;
+          values.push(...filterValues);
+          break; // important: 1er WHERE puis AND derrière si besoin
+        }
+
+        // ajout des autres conditions en AND
+        for (let i = 1; i < conditions.length; i++) {
+          offset++;
+          query += ` AND ${conditions[i].replace(/\$\d+/, `$${offset}`)}`;
+          values.push(filterValues[i]);
+        }
+      }
+
+      query += ` RETURNING *;`;
+
+      const result = await pool.query(query, values);
+
+      if (result.rows.length === 0) throw new AppError("1060", "Not found");
+
+      let cleaned = result.rows[0];
+
+      if (isMe) {
+        const cleanedRows = await this.deletedPasswordFromDatas(result.rows);
+        cleaned = cleanedRows[0];
+      }
+
+      return {
+        result: cleaned,
+      };
+    } catch (err) {
+      if (err instanceof AppError) throw err;
+      throw new AppError("1200", err.message);
+    }
+  }
   //#endregion
 }
 

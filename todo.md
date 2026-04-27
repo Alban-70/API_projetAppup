@@ -25,3 +25,56 @@
 - https://localhost:3000/.../user?fields=id,name,email&filters=age,gt,10
 </details>
 
+
+<details>
+<summary>[ X ] <u>Faire la route pour ajouter des données aux différentes tables </u></summary>
+
+- https://localhost:3000/.../:table_name
+- req.body = { ... }
+</details>
+
+
+<details>
+<summary>[ X ] <u>Regarde le header à chaque fois (mettre la clé d'API dedans) </u></summary>
+
+-  Regarder si l'access level est supérieur à n, alors refuser
+- Sur le front, faire une session avec le basic header si autorisé
+- Se balader de page en page avec le basic header
+</details>
+
+
+<details>
+<summary>[ X ] <u> Générer un fichier par table pour voir toutes les colonnes requises etc </u></summary>
+
+-  tableExists, requiredColumns, columnsExist
+</details>
+
+
+<details>
+<summary>[ X ] <u> Faire un middleware pour les accessLevel </u></summary>
+
+-  
+</details>
+
+
+<details>
+<summary>[ X ] <u> Tout passer via des paramètres de fonctions et plus par attributs d'une classe</u></summary>
+
+-  
+</details>
+
+
+<details>
+<summary>[ X ] <u> Génère un fichier / table avec le get / post / put / deleted</u></summary>
+
+- Au démarrage, regarder s'il y a toutes les tables, même nb de fichiers, si nouvelles tables, etc ... 
+- Faire un template
+- Rajouter du code spécifique pour USER par exemple
+</details>
+
+
+<details>
+<summary>[ X ] <u> Passer les headers</u></summary>
+
+-  
+</details>
