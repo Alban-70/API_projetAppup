@@ -4,7 +4,7 @@ require("dotenv").config();
 
 const generateFilePerTable = require("./database/generator/generateFilePerTable");
 
-const authRoutes = require("./routes/user");
+const authRoutes = require("./routes/routes");
 
 async function startServer() {
   try {

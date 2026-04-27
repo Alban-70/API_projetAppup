@@ -38,16 +38,20 @@ function validateBody(body) {
 /**
  * GET all rows with optional pagination
  */
-async function get(req) {
+async function get({ query, params, body }) {
     const request = new TableRequest();
-    const page = parseInt(req.query.page  || 1);
-    const limit = parseInt(req.query.limit || 20);
-    const fields = req.query.fields?.split(",")  || ["*"];
-    const filters = req.query.filters
-        ? req.query.filters.split("|").map(f => f.split(","))
-        : [];
-    const orderBy = req.query.orderBy  ?? null;
-    const orderDir = req.query.orderDir ?? "ASC";
+    const fields = !query?.fields
+      ? ["*"]
+      : Array.isArray(query.fields)
+        ? query.fields
+        : query.fields.split(",");
+    const filters = !query?.filters
+      ? []
+      : Array.isArray(query.filters)
+        ? query.filters
+        : query.filters.split("|").map(f => f.split(","));
+    const orderBy = query?.orderBy  ?? null;
+    const orderDir = query?.orderDir ?? "ASC";
 
     return request.getList({ table: TABLE, fields, filters, orderBy, orderDir });
 }
@@ -55,10 +59,14 @@ async function get(req) {
 /**
  * GET one row by id
  */
-async function getById(req) {
+async function getOne({ query, params, body }) {
     const request = new TableRequest();
-    const id = req.params.id;
-    const fields = req.query.fields?.split(",") || ["*"];
+    const id = params?.id;
+    const fields = !query?.fields
+      ? ["*"]
+      : Array.isArray(query.fields)
+        ? query.fields
+        : query.fields.split(",");
 
     return request.getSpecific({ table: TABLE, id, fields });
 }
@@ -66,11 +74,13 @@ async function getById(req) {
 /**
  * COUNT rows matching filters
  */
-async function count(req) {
+async function count({ query, params, body }) {
     const request = new TableRequest();
-    const filters = req.query.filters
-        ? req.query.filters.split("|").map(f => f.split(","))
-        : [];
+    const filters = !query?.filters
+      ? []
+      : Array.isArray(query.filters)
+        ? query.filters
+        : query.filters.split("|").map(f => f.split(","));
 
     return request.getCount({ table: TABLE, filters });
 }
@@ -78,35 +88,51 @@ async function count(req) {
 /**
  * CREATE a new row
  */
-async function create(req) {
-    validateBody(req.body);
+async function create({ query, params, body }) {
+    validateBody(body);
+
     const request = new TableRequest();
 
-    return request.postData({ table: TABLE, body: req.body });
+    return request.postData({
+        table: TABLE,
+        body
+    });
 }
 
 /**
  * UPDATE a row by id
  */
-async function update(req) {
-    validateBody(req.body);
-    const request = new TableRequest();
-    const id = req.params.id;
+async function update({ query, params, body }) {
+    validateBody(body);
 
-    return request.putData({ table: TABLE, id, body: req.body });
+    const request = new TableRequest();
+    const id = params?.id;
+
+    if (!id) throw new Error("Missing id");
+
+    return request.putData({
+        table: TABLE,
+        id,
+        body
+    });
 }
 
 /**
  * DELETE a row by id
  */
-async function remove(req) {
+async function remove({ query, params, body }) {
     const request = new TableRequest();
-    const id = req.params.id;
+    const id = params?.id;
 
-    return request.deleteData({ table: TABLE, id });
+    if (!id) throw new Error("Missing id");
+
+    return request.deleteData({
+        table: TABLE,
+        id
+    });
 }
 
-module.exports = { get, getById, count, create, update, remove };
+module.exports = { get, getOne, count, create, update, remove };
 `;
 }
 

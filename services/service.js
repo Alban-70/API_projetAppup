@@ -5,14 +5,13 @@ const requestIp = require("request-ip");
 const AppError = require("../Error/AppError");
 const parseRequest = require("../helpers/parseRequest.helper");
 const TableRequest = require("../models/TableRequest");
-
+const { dispatch } = require("./dispatcher");
 
 // #region Constants
-const A2F_COOLDOWN_SECONDS = 60;      // Minimum delay (in seconds) between two 2FA code requests to prevent abuse/spam.
-const DAILY_RESET_PASSWORD = 3;       // Maximum number of password reset requests allowed per user per day.
-const MAX_FAILED_LOGIN_ATTEMPT = 3;   // Maximum number of failed login attempts allowed every 15 minutes.
+const A2F_COOLDOWN_SECONDS = 60; // Minimum delay (in seconds) between two 2FA code requests to prevent abuse/spam.
+const DAILY_RESET_PASSWORD = 3; // Maximum number of password reset requests allowed per user per day.
+const MAX_FAILED_LOGIN_ATTEMPT = 3; // Maximum number of failed login attempts allowed every 15 minutes.
 //#endregion
-
 
 // #region Log Queries (Presets)
 
@@ -52,8 +51,34 @@ const LOG_QUERIES = {
 };
 //#endregion
 
-
 // #region Helpers
+/**
+ * Removes sensitive fields from a list of users based on the configuration
+ * @param {Object[]} users
+ * @returns {Promise<Object[]>}
+ */
+async function deletedPasswordFromDatas(users) {
+  if (!users) return [];
+
+  if (!Array.isArray(users)) users = [users];
+  
+  const config = await dispatch("configuration", "get", datas = {});
+  const fields_to_clean = config?.result[0].fields_to_clean || [];
+
+  const newUsers = users.map((user) => {
+    const cleaned = { ...user };
+
+    // Delete each field listed in configuration
+    fields_to_clean.forEach((field) => {
+      delete cleaned[field];
+    });
+
+    return cleaned;
+  });
+
+  return newUsers;
+}
+
 /**
  * Generates a random 2FA code padded to the specified length
  * @param {Number} lengthCode - The desired length of the code
@@ -61,12 +86,12 @@ const LOG_QUERIES = {
  */
 function generateA2FCode(lengthCode) {
   const code = crypto.randomInt(0, 10000);
-  return code.toString().padStart(lengthCode, '0');
+  return code.toString().padStart(lengthCode, "0");
 }
 
 /**
  * Checks if the password meets security requirements
- * 
+ *
  * @param {String} password
  * @returns {{ isGoodPassword: Boolean, message: String }}
  */
@@ -114,7 +139,7 @@ function checkGoodPassword(password) {
 
 /**
  * Validates email format
- * 
+ *
  * @param {String} email
  * @returns {{ isGoodEmail: Boolean, message: String }}
  */
@@ -145,7 +170,6 @@ function checkGoodEmail(email) {
   };
 }
 
-
 /**
  * Extracts IP address and User-Agent from request
  * @param {import("express").Request} req
@@ -158,9 +182,6 @@ function getIpAddressAndUA(req) {
   };
 }
 // #endregion
-
-
-
 
 //#region Authentification
 /**
@@ -180,12 +201,10 @@ function extractBasicAuth(req) {
   const decoded = Buffer.from(credentials, "base64").toString("utf-8");
   const [email, password] = decoded.split(":");
 
-  if (!email || !password)
-    throw new AppError("1050", "Missing credentials");
+  if (!email || !password) throw new AppError("1050", "Missing credentials");
 
   return { email, password };
 }
-
 
 /**
  * Core authentication workflow handling:
@@ -193,7 +212,7 @@ function extractBasicAuth(req) {
  * - password reset request
  * - email sending
  * - security logging
- * 
+ *
  * @async
  * @param {import("express").Request} req
  * @param {{ isCreatingUser: Boolean, email_subject: String, email_content: Function }} datas
@@ -215,35 +234,32 @@ async function processAccountSecurityFlow(req, datas) {
   let expires_at = null;
   let existingUser = null;
 
-  const request = new TableRequest();
-
   try {
-    const config = await request.getWebsiteConfiguration();    
-    if (!config) 
-      throw new AppError("1060", "Website config not found!");
+    const config = await dispatch("configuration", "get", req);
+    if (!config) throw new AppError("1060", "Website config not found!");
 
     const existingUserResult = await getUserByEmail(email);
     existingUser = existingUserResult.result[0] ?? null;
-
 
     // Prevent duplicate account creation
     if (isCreatingUser && existingUser)
       throw new AppError("1010", "User already exists!");
 
-
     // Ensure user exists for password reset flow
-    if (!isCreatingUser && !existingUser) 
+    if (!isCreatingUser && !existingUser)
       throw new AppError("1060", "User not found!");
-
 
     if (!isCreatingUser) {
       const dailyCount = await countDailyResetPassword(email);
       if (dailyCount >= DAILY_RESET_PASSWORD)
-        throw new AppError("1070", "You have reached the maximum number of password reset requests for today. Please try again tomorrow.")
+        throw new AppError(
+          "1070",
+          "You have reached the maximum number of password reset requests for today. Please try again tomorrow.",
+        );
     }
 
     const emailCheck = checkGoodEmail(email);
-    if (!emailCheck.isGoodEmail) 
+    if (!emailCheck.isGoodEmail)
       throw new AppError(emailCheck.status, emailCheck.message);
 
     expires_at = new Date(Date.now() + Number(process.env.TIME_TOKEN_EXPIRES));
@@ -256,8 +272,7 @@ async function processAccountSecurityFlow(req, datas) {
       // Hash password before saving it to database
       const password_hash = await bcrypt.hash(password, 10);
 
-      const newUserResult = await request.postData({
-        table: "users",
+      const newUserResult = await dispatch("users", "create", {
         body: {
           email,
           password: password_hash,
@@ -266,31 +281,32 @@ async function processAccountSecurityFlow(req, datas) {
       });
       newUser = newUserResult.result;
 
-      if (!newUser) 
-        throw new AppError("1110", "User not created");
+      if (!newUser) throw new AppError("1110", "User not created");
 
-      const lastCodeResult = await request.getList({
-        table: "authenticate_codes",
-        filters: [
-          ["user_id", "eq", newUser.id]
-        ],
-        orderBy: "created_dt",
-        orderDir: "DESC",
-        isMe: true,
+      const lastCodeResult = await dispatch("authenticate_codes", "get", {
+        query: {
+          filters: [["user_id", "eq", newUser.id]],
+          orderBy: "created_dt",
+          orderDir: "DESC",
+          isMe: true,
+        },
       });
       const lastCode = lastCodeResult.result[0] ?? null;
       if (lastCode) {
-        const secondesElapsed = (Date.now() - new Date(lastCode.created_dt)) / 1000;
+        const secondesElapsed =
+          (Date.now() - new Date(lastCode.created_dt)) / 1000;
         if (secondesElapsed < A2F_COOLDOWN_SECONDS) {
           const remaining = Math.ceil(A2F_COOLDOWN_SECONDS - secondesElapsed);
-          throw new AppError("1090", `Please wait ${remaining}s before requesting a new code.`);
+          throw new AppError(
+            "1090",
+            `Please wait ${remaining}s before requesting a new code.`,
+          );
         }
       }
 
-      code = generateA2FCode(config.two_factor_authenticator_length); 
+      code = generateA2FCode(config.two_factor_authenticator_length);
 
-      await request.postData({
-        table: "authenticate_codes",
+      await dispatch("authenticate_codes", "create", {
         body: {
           user_id: newUser.id,
           code,
@@ -305,9 +321,9 @@ async function processAccountSecurityFlow(req, datas) {
       subject: email_subject,
       content: email_content(isCreatingUser ? code : token),
     });
-    
+
     // Remove sensitive data before returning the user object
-    const userCreated = await request.deletedPasswordFromDatas([newUser]);
+    const userCreated = await deletedPasswordFromDatas([newUser]);
 
     success = true;
     return {
@@ -318,8 +334,7 @@ async function processAccountSecurityFlow(req, datas) {
     };
   } finally {
     // Always log authentication attempts for audit/security purposes
-    await request.postData({
-      table: "login_logs",
+    await dispatch("login_logs", "create", {
       body: {
         ip_address,
         user_agent,
@@ -332,10 +347,9 @@ async function processAccountSecurityFlow(req, datas) {
   }
 }
 
-
 /**
  * Authenticates a user with email and password
- * 
+ *
  * @async
  * @param {import("express").Request} req
  * @returns {Promise<{ result: Number, message: String }>}
@@ -345,11 +359,9 @@ async function loginUser(req) {
   const { email, password } = req.body;
   const { ip_address, user_agent } = getIpAddressAndUA(req);
 
-  let numberOfLoginAttempt =  0;
+  let numberOfLoginAttempt = 0;
   let success = true;
-  let existingUser = null
-
-  const request = new TableRequest();
+  let existingUser = null;
 
   try {
     const existingUserResult = await getUserByEmail(email);
@@ -360,30 +372,30 @@ async function loginUser(req) {
 
     numberOfLoginAttempt = await countLoginAttemptsEvery15min(email);
 
-    if (numberOfLoginAttempt > MAX_FAILED_LOGIN_ATTEMPT) 
-      throw new AppError("1070", "You have reached the maximum number of login attempt for today. Please try again in 15 minutes.");
+    if (numberOfLoginAttempt > MAX_FAILED_LOGIN_ATTEMPT)
+      throw new AppError(
+        "1070",
+        "You have reached the maximum number of login attempt for today. Please try again in 15 minutes.",
+      );
 
     const passwordMatch = await bcrypt.compare(password, existingUser.password);
     if (!passwordMatch) {
       success = false;
-      throw new AppError("1100", "Invalid email or password")
+      throw new AppError("1100", "Invalid email or password");
     }
 
     // const base64Header = Buffer.from(email + ":" + password).toString("base64");
     let message = "User successfully logged in";
-  
 
     if (!existingUser.email_verified)
       message += " but his mail is not verified";
 
     return {
       result: existingUser.id,
-      message: message
-    }
-
+      message: message,
+    };
   } finally {
-    await request.postData({
-      table: "login_logs",
+    await dispatch("login_logs", "create", {
       body: {
         ip_address,
         user_agent,
@@ -396,10 +408,9 @@ async function loginUser(req) {
   }
 }
 
-
 /**
  * Registers a new user
- * 
+ *
  * @async
  * @param {import("express").Request} req
  */
@@ -432,25 +443,23 @@ async function registerUser(req) {
   });
 }
 
-
 /**
  * Retrieves the authenticated user from the Basic Auth header
- * 
+ *
  * @async
  * @param {import("express").Request} req
  * @returns {Promise<{ result: Object, message: String }>}
  * @throws {AppError}
  */
 async function getMe(req) {
-
   try {
     const { email, password } = extractBasicAuth(req);
-    
-    const request = new TableRequest();
-    const result = await request.getList({
-      table: "users",
-      filters: [["email", "eq", email]],
-      isMe: true,
+
+    const result = await dispatch("users", "get", {
+      query: {
+        filters: [["email", "eq", email]],
+        isMe: true,
+      }
     });
 
     const user = result.result[0];
@@ -460,8 +469,7 @@ async function getMe(req) {
     const passwordMatch = await bcrypt.compare(password, user.password);
     if (!passwordMatch) throw new AppError("1100", "Invalid credentials");
 
-
-    const cleanedUsers = await request.deletedPasswordFromDatas([user]);
+    const cleanedUsers = await deletedPasswordFromDatas([user]);
 
     return {
       result: cleanedUsers[0],
@@ -474,11 +482,10 @@ async function getMe(req) {
 }
 //#endregion
 
-
 // #region Email
 /**
  * Sends a transactional email via Brevo API
- * 
+ *
  * @async
  * @param {{ email: String, subject: String, content: String }} user - The email data
  * @returns {Promise<void>}
@@ -513,11 +520,10 @@ async function sendEmail(user) {
 }
 //#endregion
 
-
 //#region Password flow
 /**
  * Handles password reset using token verification
- * 
+ *
  * @async
  * @param {import("express").Request} req
  * @returns {Promise<{ result: Object, message: String }>}
@@ -530,18 +536,16 @@ async function verifyResetPassword(req) {
   let success = false;
   let log = null;
 
-  const request = new TableRequest();
 
   try {
     // Shared token validation logic
-    log = await validateTokenOrThrow(request, token);
+    log = await validateTokenOrThrow(token);
 
     // Hash new password securely before saving
     const password_hash = await bcrypt.hash(password, 10);
 
     // Update user password
-    const user = await request.putData({
-      table: "users",
+    const user = await dispatch("users", "update", {
       filters: [["email", "eq", log[0].user_email]],
       body: {
         email: log[0].user_email,
@@ -556,8 +560,7 @@ async function verifyResetPassword(req) {
     };
   } finally {
     // Audit log for security tracking
-    await request.postData({
-      table: "login_logs",
+    await dispatch("login_logs", "create", {
       body: {
         ip_address,
         user_agent,
@@ -569,10 +572,9 @@ async function verifyResetPassword(req) {
   }
 }
 
-
 /**
  * Sends password reset email
- * 
+ *
  * @async
  * @param {import("express").Request} req
  */
@@ -588,7 +590,6 @@ async function sendPasswordResetEmail(req) {
   });
 }
 
-
 /**
  * Validates a login token and returns the associated log entry.
  * Used for password reset flows.
@@ -598,21 +599,21 @@ async function sendPasswordResetEmail(req) {
  * @returns {Promise<Object>}
  * @throws {Error}
  */
-async function validateTokenOrThrow(request, token) {
+async function validateTokenOrThrow(token) {
   if (!token) {
-      throw new AppError("1050", "Token is missing!");
+    throw new AppError("1050", "Token is missing!");
   }
 
   // Fetch token record from database
-  const log = await request.getList({
-    table: "login_logs",
-    fields: ["id", "user_email", "created_dt"],
-    filters: [["token", "eq", token]]
+  const log = await dispatch("login_logs", "get", {
+    query: {
+      fields: ["id", "user_email", "created_dt"],
+      filters: [["token", "eq", token]],
+    }
   });
 
   const logEntry = log.result[0];
   if (!logEntry) throw new AppError("1020", "Token is invalid!");
-
 
   // Check expiration (security constraint)
   const isExpired = new Date() > new Date(logEntry.expires_at);
@@ -623,11 +624,10 @@ async function validateTokenOrThrow(request, token) {
 }
 //#endregion
 
-
 // #region Email Verification
 /**
  * Verifies user email using token (account activation flow)
- * 
+ *
  * @async
  * @param {import("express").Request} req
  * @returns {Promise<{ result: Object, message: String }>}
@@ -640,18 +640,17 @@ async function verifyEmail(req) {
   let authenticateCode = null;
   let mailUser = null;
 
-  const request = new TableRequest();
-
   try {
     if (!code) {
       throw new AppError("1050", "Code is missing");
     }
 
     // Fetch code record from database
-    const authenticateCodeResult = await request.getList({
-      table: "authenticate_codes",
-      filters: [["code", "eq", code]],
-      isMe: false,
+    const authenticateCodeResult = await dispatch("authenticate_codes", "get", {
+      query: {
+        filters: [["code", "eq", code]],
+        isMe: false,
+      }
     });
     authenticateCode = authenticateCodeResult.result[0] ?? null;
     if (!authenticateCode) {
@@ -664,13 +663,16 @@ async function verifyEmail(req) {
     }
 
     // Activate user account
-    const user = await request.putData({
-      table: "users",
-      id: authenticateCode.user_id,
+    const user = await dispatch("users", "update", {
+      params: {
+        id: authenticateCode.user_id,
+      },
       body: {
         email_verified: true,
       },
-      isMe: true,
+      query: {
+        isMe: true,
+      }
     });
 
     mailUser = user.result.email;
@@ -682,8 +684,7 @@ async function verifyEmail(req) {
     };
   } finally {
     // Audit log for security tracking
-    await request.postData({
-      table: "login_logs",
+    await dispatch("login_logs", "create", {
       body: {
         ip_address,
         user_agent,
@@ -696,11 +697,8 @@ async function verifyEmail(req) {
 }
 //#endregion
 
-
 // #region Log Counter
 async function countLogs(query) {
-  const request = new TableRequest();
-
   const filters = [...(query.filters || [])];
 
   if (query.timeWindowMs) {
@@ -708,25 +706,24 @@ async function countLogs(query) {
     filters.push(["created_dt", "gte", dateLimit]);
   }
 
-  const data = await request.getCount({
-    table: "login_logs",
-    fields: ["id"],
-    filters,
+  const data = await dispatch("login_logs", "count", {
+    query: {
+      fields: ["id"],
+      filters,
+    }
   });
+
   return data.result.rows[0].count;
 }
-
 
 async function countLoginAttemptsEvery15min(email) {
   return countLogs(LOG_QUERIES.loginAttempts(email));
 }
 
-
 async function countDailyResetPassword(email) {
   return countLogs(LOG_QUERIES.resetPassword(email));
 }
 //#endregion
-
 
 // #region Data access layer (generic queries)
 /**
@@ -738,22 +735,24 @@ async function countDailyResetPassword(email) {
  */
 async function getList(req) {
   const { table, fields, filters, orderBy, orderDir } = parseRequest(req);
-  
-  const request = new TableRequest();
-  const result = await request.getList({
-    table, 
-    fields, 
-    filters,
-    orderBy,
-    orderDir,
+  console.log("FIELDS RAW:", fields);
+
+  const response = await dispatch(table, "get", {
+    query: {
+      fields,
+      filters,
+      orderBy,
+      orderDir,
+    },
   });
 
+  const cleaned = await deletedPasswordFromDatas(response.result);
+
   return {
-    result: result.result,
+    result: cleaned,
     message: "Datas fetched successfully",
   };
 }
-
 
 /**
  * Get specific record(s) from a table
@@ -765,22 +764,25 @@ async function getList(req) {
 async function getSpecific(req) {
   const { table, id, fields, filters, orderBy, orderDir } = parseRequest(req);
 
-  const request = new TableRequest();
-  const result = await request.getSpecific({
-    table,
-    id,
-    fields,
-    filters,
-    orderBy,
-    orderDir,
+  const response = await dispatch(table, "getOne", {
+    params: {
+      id
+    },
+    query: {
+      fields,
+      filters,
+      orderBy,
+      orderDir,
+    },
   });
 
+  const cleaned = await deletedPasswordFromDatas(response.result);
+
   return {
-    result: result.result,
+    result: cleaned,
     message: "Datas fetched successfully",
   };
 }
-
 
 /**
  * Get user by email (internal helper)
@@ -790,17 +792,14 @@ async function getSpecific(req) {
  * @returns {Promise<{ result: Object[] }>}
  */
 async function getUserByEmail(email) {
-  const request = new TableRequest();
-
-  return request.getList({
-    table: "users",
-    filters: [["email", "eq", email]],
-    isMe: true,
+  return dispatch("users", "get", {
+    query: {
+      filters: [["email", "eq", email]],
+      isMe: true,
+    }
   });
 }
 // #endregion
-
-
 
 module.exports = {
   getList,
@@ -811,6 +810,6 @@ module.exports = {
   sendPasswordResetEmail,
   loginUser,
   getMe,
-  extractBasicAuth, 
+  extractBasicAuth,
   getUserByEmail,
 };

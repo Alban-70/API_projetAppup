@@ -27,7 +27,7 @@
 
 
 <details>
-<summary>[ X ] <u>Faire la route pour ajouter des données aux différentes tables </u></summary>
+<summary>[ V ] <u>Faire la route pour ajouter des données aux différentes tables </u></summary>
 
 - https://localhost:3000/.../:table_name
 - req.body = { ... }
@@ -35,11 +35,9 @@
 
 
 <details>
-<summary>[ X ] <u>Regarde le header à chaque fois (mettre la clé d'API dedans) </u></summary>
+<summary>[ V ] <u>Regarde le header à chaque fois</u></summary>
 
 -  Regarder si l'access level est supérieur à n, alors refuser
-- Sur le front, faire une session avec le basic header si autorisé
-- Se balader de page en page avec le basic header
 </details>
 
 
@@ -51,14 +49,14 @@
 
 
 <details>
-<summary>[ X ] <u> Faire un middleware pour les accessLevel </u></summary>
+<summary>[ V ] <u> Faire un middleware pour les accessLevel </u></summary>
 
 -  
 </details>
 
 
 <details>
-<summary>[ X ] <u> Tout passer via des paramètres de fonctions et plus par attributs d'une classe</u></summary>
+<summary>[ V ] <u> Tout passer via des paramètres de fonctions et plus par attributs d'une classe</u></summary>
 
 -  
 </details>
@@ -74,7 +72,28 @@
 
 
 <details>
-<summary>[ X ] <u> Passer les headers</u></summary>
+<summary>[ X ] <u> </u></summary>
+
+-  
+</details>
+
+
+<details>
+<summary>[ X ] <u> </u></summary>
+
+-  
+</details>
+
+
+<details>
+<summary>[ X ] <u> </u></summary>
+
+-  
+</details>
+
+
+<details>
+<summary>[ X ] <u> </u></summary>
 
 -  
 </details>

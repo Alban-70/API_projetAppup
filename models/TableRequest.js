@@ -13,28 +13,7 @@ class TableRequest {
     return result.rows[0];
   }
 
-  /**
-   * Removes sensitive fields from a list of users based on the configuration
-   * @param {Object[]} users
-   * @returns {Promise<Object[]>}
-   */
-  async deletedPasswordFromDatas(users) {
-    const config = await this.getWebsiteConfiguration();
-    const fields_to_clean = config?.fields_to_clean || [];
-
-    const newUsers = users.map((user) => {
-      const cleaned = { ...user };
-
-      // Delete each field listed in configuration
-      fields_to_clean.forEach((field) => {
-        delete cleaned[field];
-      });
-
-      return cleaned;
-    });
-
-    return newUsers;
-  }
+  
   //#endregion
 
   //#region DB Verification
@@ -179,9 +158,6 @@ class TableRequest {
       const result = await pool.query(query, values);
 
       let cleaned = result.rows;
-      if (!isMe) {
-        cleaned = await this.deletedPasswordFromDatas(result.rows);
-      }
 
       return {
         result: cleaned,
@@ -232,17 +208,8 @@ class TableRequest {
 
       if (result.rows.length === 0) throw new AppError("1060", "Not found");
 
-      let cleaned;
-
-      if (!isMe) {
-        const cleanedRows = await this.deletedPasswordFromDatas(result.rows);
-        cleaned = cleanedRows;
-      } else {
-        cleaned = result.rows;
-      }
-
       return {
-        result: cleaned[0],
+        result: result.rows[0],
       };
     } catch (err) {
       if (err instanceof AppError) throw err;
@@ -375,15 +342,8 @@ class TableRequest {
 
       if (result.rows.length === 0) throw new AppError("1060", "Not found");
 
-      let cleaned = result.rows[0];
-
-      if (isMe) {
-        const cleanedRows = await this.deletedPasswordFromDatas(result.rows);
-        cleaned = cleanedRows[0];
-      }
-
       return {
-        result: cleaned,
+        result: result.rows[0],
       };
     } catch (err) {
       if (err instanceof AppError) throw err;
