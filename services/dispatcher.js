@@ -24,14 +24,6 @@ async function dispatch(table, action, datas) {
 
   if (!handler[action]) throw new AppError("1060", "Action not found");
 
-  console.log(datas)
-
-  console.log("gros log", {
-    query: datas?.req?.query || datas?.query,
-    params: datas?.req?.params || datas?.params,
-    body: datas?.body || {},
-  })
-
   return handler[action]({
     query: datas?.req?.query || datas?.query,
     params: datas?.req?.params || datas?.params,

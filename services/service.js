@@ -4,13 +4,14 @@ const SibApiV3Sdk = require("sib-api-v3-sdk");
 const requestIp = require("request-ip");
 const AppError = require("../Error/AppError");
 const parseRequest = require("../helpers/parseRequest.helper");
-const TableRequest = require("../models/TableRequest");
 const { dispatch } = require("./dispatcher");
 
 // #region Constants
 const A2F_COOLDOWN_SECONDS = 60; // Minimum delay (in seconds) between two 2FA code requests to prevent abuse/spam.
 const DAILY_RESET_PASSWORD = 3; // Maximum number of password reset requests allowed per user per day.
 const MAX_FAILED_LOGIN_ATTEMPT = 3; // Maximum number of failed login attempts allowed every 15 minutes.
+const ACCESS_LEVEL_BEFORE_VERIFY_EMAIL = 5;
+const ACCESS_LEVEL_AFTER_VERIFY_EMAIL = 10;
 //#endregion
 
 // #region Log Queries (Presets)
@@ -276,6 +277,7 @@ async function processAccountSecurityFlow(req, datas) {
         body: {
           email,
           password: password_hash,
+          access_level: ACCESS_LEVEL_BEFORE_VERIFY_EMAIL,
           ...rest,
         },
       });
@@ -669,10 +671,11 @@ async function verifyEmail(req) {
       },
       body: {
         email_verified: true,
+        access_level: ACCESS_LEVEL_AFTER_VERIFY_EMAIL,
       },
       query: {
         isMe: true,
-      }
+      },
     });
 
     mailUser = user.result.email;
@@ -735,7 +738,6 @@ async function countDailyResetPassword(email) {
  */
 async function getList(req) {
   const { table, fields, filters, orderBy, orderDir } = parseRequest(req);
-  console.log("FIELDS RAW:", fields);
 
   const response = await dispatch(table, "get", {
     query: {
@@ -784,6 +786,68 @@ async function getSpecific(req) {
   };
 }
 
+
+async function postData(req) {
+  const { table, body } = parseRequest(req);
+
+  const response = await dispatch(table, "create", {
+    body,
+  });
+
+  const cleaned = await deletedPasswordFromDatas(response.result);
+
+  return {
+    result: cleaned,
+    message: "Data created successfully",
+  };
+}
+
+
+async function putData(req) {
+  const { table, id, filters, body } = parseRequest(req);
+
+  const response = await dispatch(table, "update", {
+    params: {
+      id
+    },
+    query: {
+      filters,
+    },
+    body,
+  });
+
+  const cleaned = await deletedPasswordFromDatas(response.result);
+
+  return {
+    result: cleaned, 
+    message: "Data updated successfully",
+  };
+}
+
+
+async function softDelete(req) {
+  const { table, id } = parseRequest(req);
+
+  if (!id) throw new Error("Missing id");
+
+  const response = await dispatch(table, "update", {
+    params: {
+      id,
+    },
+    body: {
+      deleted: 1
+    }
+  });
+
+  const cleaned = await deletedPasswordFromDatas(response.result);
+
+  return {
+    result: cleaned,
+    message: "Data updated successfully",
+  };
+}
+
+
 /**
  * Get user by email (internal helper)
  *
@@ -812,4 +876,7 @@ module.exports = {
   getMe,
   extractBasicAuth,
   getUserByEmail,
+  postData,
+  putData,
+  softDelete,
 };

@@ -10,9 +10,10 @@ const {
 /*
 access_level :
 -> 
-    < 5 = email not verified
-    < 10 = simple user with email verified
-    < 
+    n < 5 = email not verified
+    5 < n < 10 = simple user with email verified
+    10 < n < 50 = admin (can add / edit / delete everything except users)
+    50 < n < 100 = super admin (can delete users)
 */
 
 function requireAccessLevel(minLevel) {

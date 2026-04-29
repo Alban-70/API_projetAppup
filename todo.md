@@ -63,7 +63,7 @@
 
 
 <details>
-<summary>[ X ] <u> Génère un fichier / table avec le get / post / put / deleted</u></summary>
+<summary>[ V ] <u> Génère un fichier / table avec le get / post / put / deleted</u></summary>
 
 - Au démarrage, regarder s'il y a toutes les tables, même nb de fichiers, si nouvelles tables, etc ... 
 - Faire un template

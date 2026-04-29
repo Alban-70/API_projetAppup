@@ -297,59 +297,48 @@ class TableRequest {
 
   //#region PUT QUERIES
   async putData({ table, id, filters = [], body = {}, isMe = false } = {}) {
-    try {
-      await this.#validate(table, [], filters);
+  try {
+    await this.#validate(table, [], filters);
 
-      if (!id && filters.length === 0)
-        throw new AppError("1050", "No id or filters provided");
+    if (!id && filters.length === 0)
+      throw new AppError("1050", "No id or filters provided");
 
-      const keys = Object.keys(body);
-      const values = Object.values(body);
+    const keys = Object.keys(body);
+    const values = Object.values(body);
 
-      // Build SET clause: name = $1, email = $2, ...
-      const setClause = keys.map((key, i) => `${key} = $${i + 1}`).join(", ");
+    const setClause = keys.map((key, i) => `${key} = $${i + 1}`).join(", ");
 
-      let query = `UPDATE ${table} SET ${setClause}`;
-      let offset = values.length;
+    let query = `UPDATE ${table} SET ${setClause}`;
 
-      if (id) {
-        offset++;
-        query += ` WHERE id = $${offset}`;
-        values.push(id);
-      }
-
-      if (!id && filters.length > 0) {
-        const { conditions, values: filterValues } = this.buildConditions(filters);
-
-        for (const condition of conditions) {
-          offset++;
-          query += ` WHERE ${condition.replace(/\$\d+/, `$${offset}`)}`;
-          values.push(...filterValues);
-          break; // important: 1er WHERE puis AND derrière si besoin
-        }
-
-        // ajout des autres conditions en AND
-        for (let i = 1; i < conditions.length; i++) {
-          offset++;
-          query += ` AND ${conditions[i].replace(/\$\d+/, `$${offset}`)}`;
-          values.push(filterValues[i]);
-        }
-      }
-
-      query += ` RETURNING *;`;
-
-      const result = await pool.query(query, values);
-
-      if (result.rows.length === 0) throw new AppError("1060", "Not found");
-
-      return {
-        result: result.rows[0],
-      };
-    } catch (err) {
-      if (err instanceof AppError) throw err;
-      throw new AppError("1200", err.message);
+    // CAS 1 : UPDATE par ID
+    if (id) {
+      query += ` WHERE id = $${values.length + 1}`;
+      values.push(id);
     }
+
+    // CAS 2 : UPDATE par filters
+    else if (filters.length > 0) {
+      const { conditions, values: filterValues } = this.buildConditions(filters);
+
+      query += ` WHERE ${conditions.join(" AND ")}`;
+      values.push(...filterValues);
+    }
+
+    query += ` RETURNING *;`;
+
+    const result = await pool.query(query, values);
+
+    if (result.rows.length === 0)
+      throw new AppError("1060", "Not found");
+
+    return {
+      result: result.rows[0],
+    };
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    throw new AppError("1200", err.message);
   }
+}
   //#endregion
 }
 

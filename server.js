@@ -29,7 +29,7 @@ async function startServer() {
       console.log(`Server started on http://localhost:${PORT}`);
     });
   } catch (err) {
-    console.error("❌ Erreur au démarrage :", err);
+    console.error("Erreur au démarrage :", err);
     process.exit(1);
   }
 }
