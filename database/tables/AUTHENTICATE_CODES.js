@@ -3,7 +3,6 @@ const TableRequest = require("../../models/TableRequest");
 const TABLE = "authenticate_codes";
 const COLUMNS = ["id","uuid","code","expires_at","created_dt","changed_dt","deleted","user_id"];
 const REQUIRED_COLUMNS = ["code"];
-const HIDDEN_COLUMNS = ["password"];
 const UPDATABLE_COLUMNS = COLUMNS.filter(c => c !== "id");
 
 /**
@@ -23,22 +22,6 @@ function validateBody(body, isUpdate = false) {
     }
 }
 
-/**
- * Remove hidden fields
- */
-function cleanOutput(data) {
-    if (!data) return data;
-
-    const rows = Array.isArray(data) ? data : [data];
-
-    const cleaned = rows.map(row => {
-        const copy = { ...row };
-        HIDDEN_COLUMNS.forEach(col => delete copy[col]);
-        return copy;
-    });
-
-    return Array.isArray(data) ? cleaned : cleaned[0];
-}
 
 /**
  * GET all rows
@@ -70,7 +53,7 @@ async function get({ query, params, body }) {
     });
 
     return {
-        result: cleanOutput(result.result)
+        result: result.result
     };
 }
 
@@ -94,7 +77,7 @@ async function getOne({ query, params, body }) {
     });
 
     return {
-        result: cleanOutput(result.result)
+        result: result.result
     };
 }
 
@@ -130,7 +113,7 @@ async function create({ query, params, body }) {
     });
 
     return {
-        result: cleanOutput(result.result)
+        result: result.result
     };
 }
 
@@ -152,7 +135,7 @@ async function update({ query, params, body }) {
     });
 
     return {
-        result: cleanOutput(result.result)
+        result: result.result
     };
 }
 

@@ -3,7 +3,7 @@ const AppError = require("../Error/AppError");
 const {
   extractBasicAuth,
   getUserByEmail,
-} = require("../services/service");
+} = require("../database/tables/USERS");
 
 
 

@@ -310,17 +310,20 @@ class TableRequest {
 
     let query = `UPDATE ${table} SET ${setClause}`;
 
-    // CAS 1 : UPDATE par ID
     if (id) {
       query += ` WHERE id = $${values.length + 1}`;
       values.push(id);
     }
 
-    // CAS 2 : UPDATE par filters
     else if (filters.length > 0) {
       const { conditions, values: filterValues } = this.buildConditions(filters);
+      const offset = values.length;
 
-      query += ` WHERE ${conditions.join(" AND ")}`;
+      const offsetConditions = conditions.map((cond) =>
+        cond.replace(/\$(\d+)/g, (_, n) => `$${parseInt(n) + offset}`)
+      );
+
+      query += ` WHERE ${offsetConditions.join(" AND ")}`;
       values.push(...filterValues);
     }
 

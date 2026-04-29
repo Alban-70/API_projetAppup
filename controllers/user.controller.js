@@ -1,4 +1,5 @@
 const authService = require("../services/service");
+const USERS = require("../database/tables/USERS");
 
 
 class UserController {
@@ -28,7 +29,7 @@ class UserController {
   }
 
   static getMe(req, res) {
-    return UserController.handle(authService.getMe.bind(authService), req, res);
+    return UserController.handle(USERS.getMe.bind(USERS), req, res);
   }
 
   static getList(req, res) {
@@ -54,11 +55,7 @@ class UserController {
    * @returns {Promise<void>}
    */
   static register(req, res) {
-    return UserController.handle(
-      authService.registerUser.bind(authService),
-      req,
-      res,
-    );
+    return UserController.handle(USERS.registerUser.bind(USERS), req, res);
   }
 
   /**
@@ -68,11 +65,7 @@ class UserController {
    * @returns {Promise<void>}
    */
   static login(req, res) {
-    return UserController.handle(
-      authService.loginUser.bind(authService),
-      req,
-      res,
-    );
+    return UserController.handle(USERS.loginUser.bind(USERS), req, res);
   }
 
   static forbiddenPassword(req, res) {
@@ -85,7 +78,7 @@ class UserController {
 
   static verifyResetPassword(req, res) {
     return UserController.handle(
-      authService.verifyResetPassword.bind(authService),
+      USERS.verifyResetPassword.bind(USERS),
       req,
       res,
     );
@@ -102,14 +95,6 @@ class UserController {
   static postData(req, res) {
     return UserController.handle(
       authService.postData.bind(authService),
-      req,
-      res,
-    );
-  }
-
-  static putData(req, res) {
-    return UserController.handle(
-      authService.putData.bind(authService),
       req,
       res,
     );
