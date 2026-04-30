@@ -1,4 +1,5 @@
 const TableRequest = require("../../models/TableRequest");
+const AppError = require("../../Error/AppError");
 
 const TABLE = "authenticate_codes";
 const COLUMNS = ["id","uuid","code","expires_at","created_dt","changed_dt","deleted","user_id"];

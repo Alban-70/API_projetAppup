@@ -1,4 +1,5 @@
 const TableRequest = require("../../models/TableRequest");
+const AppError = require("../../Error/AppError");
 
 const TABLE = "discount_code";
 const COLUMNS = ["deleted","uuid","changed_dt","id_coupon","discount_value","usage_limit","times_used","started_at","expires_at","created_dt","code","discount_type"];

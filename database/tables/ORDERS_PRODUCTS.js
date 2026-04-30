@@ -1,4 +1,5 @@
 const TableRequest = require("../../models/TableRequest");
+const AppError = require("../../Error/AppError");
 
 const TABLE = "orders_products";
 const COLUMNS = ["id","uuid","ht_price","tva_price","ttc_price","quantity","product_id","color_id","size_id","created_dt","changed_dt","deleted"];

@@ -1,4 +1,5 @@
 const TableRequest = require("../../models/TableRequest");
+const AppError = require("../../Error/AppError");
 const requestIp = require("request-ip");
 const crypto = require("crypto");
 const { dispatch } = require("../../services/dispatcher");
@@ -323,7 +324,8 @@ async function create({ query, params, body }) {
 
     const result = await request.postData({
         table: TABLE,
-        body
+        body,
+        checkDuplicate: false
     });
 
     return {

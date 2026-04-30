@@ -1,4 +1,5 @@
 const TableRequest = require("../../models/TableRequest");
+const AppError = require("../../Error/AppError");
 
 const TABLE = "emails";
 const COLUMNS = ["created_dt","changed_dt","deleted","id","content","code","subject"];

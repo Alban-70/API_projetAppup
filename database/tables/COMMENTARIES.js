@@ -1,4 +1,5 @@
 const TableRequest = require("../../models/TableRequest");
+const AppError = require("../../Error/AppError");
 
 const TABLE = "commentaries";
 const COLUMNS = ["deleted","uuid","id","rating","user_id","product_id","created_dt","changed_dt","content"];

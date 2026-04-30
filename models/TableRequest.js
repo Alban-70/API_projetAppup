@@ -261,14 +261,14 @@ class TableRequest {
     return result.rows[0].exists;
   }
 
-  async postData({ table, body = {} } = {}) {
+  async postData({ table, body = {}, checkDuplicate = true } = {}) {
     try {
       await this.#validate(table, [], []);
 
       // Vérifier si les valeurs sont déja présentes
 
-      const requiredColmuns = await this.#getRequiredColumns(table);
-      const missingFields = requiredColmuns.filter((col) => !(col in body));
+      const requiredColumns = await this.#getRequiredColumns(table);
+      const missingFields = requiredColumns.filter((col) => !(col in body));
 
       if (missingFields.length > 0)
         throw new AppError(
@@ -276,8 +276,10 @@ class TableRequest {
           `Missing required fields : ${missingFields.join(", ")}`,
         );
 
-      const alreadyExists = await this.#checkIfDatasAlreadyExist(table, body);
-      if (alreadyExists) throw new AppError("1010", "Datas already exist");
+      if (checkDuplicate) {
+        const alreadyExists = await this.#checkIfDatasAlreadyExist(table, body);
+        if (alreadyExists) throw new AppError("1010", "Datas already exist");
+      }
 
       const keys = Object.keys(body);
       const values = Object.values(body);

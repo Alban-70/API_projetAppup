@@ -19,7 +19,13 @@ access_level :
 function requireAccessLevel(minLevel) {
   return async (req, res, next) => {
     try {
-      const { email, password } = extractBasicAuth(req);
+      const auth = extractBasicAuth(req);
+
+      if (!auth)
+        throw new AppError("1050", "Missing authentification");
+
+      const { email, password } = auth;
+      
       const resultUser = await getUserByEmail(email);
       const user = resultUser.result[0] ?? null;
 

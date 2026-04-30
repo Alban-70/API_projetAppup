@@ -28,6 +28,7 @@ async function dispatch(table, action, datas) {
     query: datas?.req?.query || datas?.query,
     params: datas?.req?.params || datas?.params,
     body: datas?.body || {},
+    file: datas?.file || datas?.req?.file,
   });
 }
 

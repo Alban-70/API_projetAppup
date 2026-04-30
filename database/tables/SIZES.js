@@ -1,4 +1,5 @@
 const TableRequest = require("../../models/TableRequest");
+const AppError = require("../../Error/AppError");
 
 const TABLE = "sizes";
 const COLUMNS = ["id","created_dt","changed_dt","deleted","name"];

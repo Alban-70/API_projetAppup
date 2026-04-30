@@ -1,6 +1,7 @@
 const authService = require("../services/service");
 const USERS = require("../database/tables/USERS");
 const emailService = require("../services/email");
+const authFlow = require("../core/authFlow");
 
 
 class UserController {
@@ -56,7 +57,11 @@ class UserController {
    * @returns {Promise<void>}
    */
   static register(req, res) {
-    return UserController.handle(USERS.registerUser.bind(USERS), req, res);
+    return UserController.handle(
+      emailService.sendRegisterEmail.bind(emailService),
+      req,
+      res,
+    );
   }
 
   /**
@@ -66,7 +71,7 @@ class UserController {
    * @returns {Promise<void>}
    */
   static login(req, res) {
-    return UserController.handle(USERS.loginUser.bind(USERS), req, res);
+    return UserController.handle(authFlow.loginUser.bind(authFlow), req, res);
   }
 
   static forbiddenPassword(req, res) {
@@ -79,7 +84,7 @@ class UserController {
 
   static verifyResetPassword(req, res) {
     return UserController.handle(
-      USERS.verifyResetPassword.bind(USERS),
+      authFlow.verifyResetPassword.bind(authFlow),
       req,
       res,
     );
@@ -87,7 +92,7 @@ class UserController {
 
   static verifyEmail(req, res) {
     return UserController.handle(
-      authService.verifyEmail.bind(authService),
+      emailService.verifyEmail.bind(emailService),
       req,
       res,
     );

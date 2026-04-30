@@ -1,4 +1,5 @@
 const TableRequest = require("../../models/TableRequest");
+const AppError = require("../../Error/AppError");
 
 const TABLE = "whishlists";
 const COLUMNS = ["id","uuid","user_id","product_id","size_id","color_id","created_dt","changed_dt","deleted"];

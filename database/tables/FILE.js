@@ -1,9 +1,11 @@
 const TableRequest = require("../../models/TableRequest");
 const AppError = require("../../Error/AppError");
+const uploadToS3 = require("../../AWS/configuration");
+require("dotenv").config();
 
-const TABLE = "article";
-const COLUMNS = ["id","created_dt","changed_dt","deleted","nom"];
-const REQUIRED_COLUMNS = [];
+const TABLE = "file";
+const COLUMNS = ["id","uuid","created_dt","changed_dt","deleted","name_file","url","type_file"];
+const REQUIRED_COLUMNS = ["url"];
 const UPDATABLE_COLUMNS = COLUMNS.filter(c => c !== "id");
 
 /**
@@ -103,10 +105,25 @@ async function count({ query, params, body }) {
 /**
  * CREATE
  */
-async function create({ query, params, body }) {
-    validateBody(body, false);
+async function create({ query, params, body, file }) {
 
     const request = new TableRequest();
+
+    let fileUrl = null;
+    let fileName = null;
+
+    if (file) {
+        fileUrl = await uploadToS3(process.env.S3_BUCKET, file);
+
+        fileName = file.originalname;
+
+        body.url = fileUrl;
+        body.name_file = fileName;
+
+        delete body.filePath;
+    }
+    validateBody(body, false);
+
 
     const result = await request.postData({
         table: TABLE,
@@ -168,3 +185,4 @@ module.exports = {
     update,
     remove
 };
+

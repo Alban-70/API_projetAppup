@@ -52,7 +52,7 @@ async function startServer() {
     app.use(express.urlencoded({ extended: true }));
 
 
-    app.use("/user", authRoutes);
+    app.use("/", authRoutes);
 
     app.listen(PORT, () => {
       console.log(`Server started on http://localhost:${PORT}`);

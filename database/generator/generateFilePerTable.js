@@ -34,11 +34,11 @@ async function getTableMeta(table) {
 
 function buildFile(table, columns, requiredColumns) {
   return `const TableRequest = require("../../models/TableRequest");
+  const AppError = require("../../Error/AppError");
 
 const TABLE = "${table}";
 const COLUMNS = ${JSON.stringify(columns)};
 const REQUIRED_COLUMNS = ${JSON.stringify(requiredColumns)};
-const HIDDEN_COLUMNS = ["password"];
 const UPDATABLE_COLUMNS = COLUMNS.filter(c => c !== "id");
 
 /**

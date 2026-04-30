@@ -4,6 +4,7 @@ const router = express.Router();
 const UserController = require("../controllers/user.controller");
 const { requireAccessLevel } = require("../middlewares/accessLevel.middleware");
 const tableAccessMiddleware = require("../middlewares/tableAccess.middleware");
+const upload = require("../middlewares/uploadMulter.middleware");
 
 router.post("/auth/register", UserController.register);
 router.post("/auth/login", UserController.login);
@@ -21,7 +22,7 @@ router.get("/:table_name", requireAccessLevel(10), tableAccessMiddleware, UserCo
 
 router.get("/:table_name/:id", requireAccessLevel(10), tableAccessMiddleware, UserController.getSpecific);
 
-router.post("/:table_name/add", requireAccessLevel(50), tableAccessMiddleware, UserController.postData);
+router.post("/:table_name/add", requireAccessLevel(50), tableAccessMiddleware, upload.single("file"), UserController.postData);
 
 router.put("/:table_name/:id/edit", requireAccessLevel(50), tableAccessMiddleware, UserController.putData);
 

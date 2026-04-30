@@ -1,4 +1,5 @@
 const TableRequest = require("../../models/TableRequest");
+const AppError = require("../../Error/AppError");
 
 const TABLE = "configuration";
 const COLUMNS = ["fields_to_clean","id","two_factor_authenticator_length","nb_failed_attempt","created_dt","changed_dt","deleted","website_name"];
