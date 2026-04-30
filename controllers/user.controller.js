@@ -1,5 +1,6 @@
 const authService = require("../services/service");
 const USERS = require("../database/tables/USERS");
+const emailService = require("../services/email");
 
 
 class UserController {
@@ -70,7 +71,7 @@ class UserController {
 
   static forbiddenPassword(req, res) {
     return UserController.handle(
-      authService.sendPasswordResetEmail.bind(authService),
+      emailService.sendPasswordResetEmail.bind(emailService),
       req,
       res,
     );

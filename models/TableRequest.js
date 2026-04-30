@@ -2,7 +2,6 @@ const pool = require("../database/db");
 const AppError = require("../Error/AppError");
 
 class TableRequest {
-
   //#region Config
   /**
    * Fetches the website configuration from the database
@@ -13,7 +12,6 @@ class TableRequest {
     return result.rows[0];
   }
 
-  
   //#endregion
 
   //#region DB Verification
@@ -56,8 +54,7 @@ class TableRequest {
 
   async #validate(table, fields = [], filters = []) {
     const tableExists = await this.#tableExists(table);
-    if (!tableExists)
-      throw new AppError("1060", `Table ${table} not found`);
+    if (!tableExists) throw new AppError("1060", `Table ${table} not found`);
 
     // Extract only the column name (first element) from each filter group [col, op, val]
     const filtersCols = filters.map(([col]) => col);
@@ -172,17 +169,23 @@ class TableRequest {
    * Returns a single row by id, with optional fields and filters
    * @returns {Promise<void>}
    */
-  async getSpecific({ table, id, fields = ["*"], filters = [], orderBy = null, orderDir = "ASC", isMe = false } = {}) {
+  async getSpecific({
+    table,
+    id,
+    fields = ["*"],
+    filters = [],
+    orderBy = null,
+    orderDir = "ASC",
+    isMe = false,
+  } = {}) {
     try {
       await this.#validate(table, fields, filters);
 
-      if (id && isNaN(id))
-        throw new AppError("1050", "Invalid id format");
+      if (id && isNaN(id)) throw new AppError("1050", "Invalid id format");
 
       const fieldStr = fields.join(", ") || "*";
       let query = `SELECT ${fieldStr} FROM ${table}`;
       const values = [];
-
 
       if (id) {
         query += ` WHERE id = $1`;
@@ -191,7 +194,8 @@ class TableRequest {
         throw new AppError("1050", "No id provided");
       }
 
-      const { conditions, values: filterValues } = this.buildConditions(filters);
+      const { conditions, values: filterValues } =
+        this.buildConditions(filters);
 
       let offset = values.length;
 
@@ -264,9 +268,7 @@ class TableRequest {
       // Vérifier si les valeurs sont déja présentes
 
       const requiredColmuns = await this.#getRequiredColumns(table);
-      const missingFields = requiredColmuns.filter(
-        (col) => !(col in body),
-      );
+      const missingFields = requiredColmuns.filter((col) => !(col in body));
 
       if (missingFields.length > 0)
         throw new AppError(
@@ -297,51 +299,69 @@ class TableRequest {
 
   //#region PUT QUERIES
   async putData({ table, id, filters = [], body = {}, isMe = false } = {}) {
-  try {
-    await this.#validate(table, [], filters);
+    try {
+      await this.#validate(table, [], filters);
 
-    if (!id && filters.length === 0)
-      throw new AppError("1050", "No id or filters provided");
+      if (!id && filters.length === 0)
+        throw new AppError("1050", "No id or filters provided");
 
-    const keys = Object.keys(body);
-    const values = Object.values(body);
+      const keys = Object.keys(body);
+      const values = Object.values(body);
 
-    const setClause = keys.map((key, i) => `${key} = $${i + 1}`).join(", ");
+      const setClause = keys.map((key, i) => `${key} = $${i + 1}`).join(", ");
 
-    let query = `UPDATE ${table} SET ${setClause}`;
+      let query = `UPDATE ${table} SET ${setClause}`;
 
-    if (id) {
-      query += ` WHERE id = $${values.length + 1}`;
-      values.push(id);
+      if (id) {
+        query += ` WHERE id = $${values.length + 1}`;
+        values.push(id);
+      } else if (filters.length > 0) {
+        const { conditions, values: filterValues } =
+          this.buildConditions(filters);
+        const offset = values.length;
+
+        const offsetConditions = conditions.map((cond) =>
+          cond.replace(/\$(\d+)/g, (_, n) => `$${parseInt(n) + offset}`),
+        );
+
+        query += ` WHERE ${offsetConditions.join(" AND ")}`;
+        values.push(...filterValues);
+      }
+
+      query += ` RETURNING *;`;
+
+      const result = await pool.query(query, values);
+
+      if (result.rows.length === 0) throw new AppError("1060", "Not found");
+
+      return {
+        result: result.rows[0],
+      };
+    } catch (err) {
+      if (err instanceof AppError) throw err;
+      throw new AppError("1200", err.message);
     }
-
-    else if (filters.length > 0) {
-      const { conditions, values: filterValues } = this.buildConditions(filters);
-      const offset = values.length;
-
-      const offsetConditions = conditions.map((cond) =>
-        cond.replace(/\$(\d+)/g, (_, n) => `$${parseInt(n) + offset}`)
-      );
-
-      query += ` WHERE ${offsetConditions.join(" AND ")}`;
-      values.push(...filterValues);
-    }
-
-    query += ` RETURNING *;`;
-
-    const result = await pool.query(query, values);
-
-    if (result.rows.length === 0)
-      throw new AppError("1060", "Not found");
-
-    return {
-      result: result.rows[0],
-    };
-  } catch (err) {
-    if (err instanceof AppError) throw err;
-    throw new AppError("1200", err.message);
   }
-}
+
+  async deleteData({ table, id } = {}) {
+    try {
+      await this.#validate(table, [], []);
+
+      if (!id) throw new AppError("1050", "No id provided");
+
+      const query = `DELETE FROM ${table} WHERE id = $1 RETURNING *;`;
+      const result = await pool.query(query, [id]);
+
+      if (result.rows.length === 0) throw new AppError("1060", "Not found");
+
+      return {
+        result: result.rows[0],
+      };
+    } catch (err) {
+      if (err instanceof AppError) throw err;
+      throw new AppError("1200", err.message);
+    }
+  }
   //#endregion
 }
 

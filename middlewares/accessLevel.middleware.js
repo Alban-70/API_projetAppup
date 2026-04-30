@@ -28,7 +28,7 @@ function requireAccessLevel(minLevel) {
       const passwordMatch = await bcrypt.compare(password, user.password);
       if (!passwordMatch) throw new AppError("1100", "Invalid credentials");
 
-      if (user.access_level < minLevel)
+      if (user.access_level <= minLevel)
         throw new AppError("1030", "Insufficient permissions");
 
       req.user = user;

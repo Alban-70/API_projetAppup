@@ -6,6 +6,7 @@ const AppError = require("../Error/AppError");
 const parseRequest = require("../helpers/parseRequest.helper");
 const { dispatch } = require("./dispatcher");
 const { LOG_QUERIES } = require("../database/tables/LOGIN_LOGS");
+const { processAccountSecurityFlow } = require("../database/tables/USERS");
 
 // #region Constants
 const ACCESS_LEVEL_AFTER_VERIFY_EMAIL = 10;
@@ -183,6 +184,8 @@ async function getList(req) {
 async function getSpecific(req) {
   const { table, id, fields, filters, orderBy, orderDir } = parseRequest(req);
 
+  if (!id) throw new AppError("1050", "Missing id");
+
   const response = await dispatch(table, "getOne", {
     params: {
       id
@@ -257,7 +260,7 @@ async function putData(req) {
 async function softDelete(req) {
   const { table, id } = parseRequest(req);
 
-  if (!id) throw new Error("Missing id");
+  if (!id) throw new AppError("1050", "Missing id");
 
   const response = await dispatch(table, "update", {
     params: {
@@ -276,22 +279,6 @@ async function softDelete(req) {
   };
 }
 
-
-/**
- * Get user by email (internal helper)
- *
- * @async
- * @param {String} email
- * @returns {Promise<{ result: Object[] }>}
- */
-async function getUserByEmail(email) {
-  return dispatch("users", "get", {
-    query: {
-      filters: [["email", "eq", email]],
-      isMe: true,
-    }
-  });
-}
 // #endregion
 
 module.exports = {

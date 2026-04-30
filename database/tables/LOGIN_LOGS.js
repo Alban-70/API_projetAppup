@@ -224,12 +224,15 @@ function validateBody(body, isUpdate = false) {
 
     const invalid = Object.keys(body).filter(k => !allowed.includes(k));
     if (invalid.length > 0)
-        throw new Error("Invalid fields: " + invalid.join(", "));
+        throw new AppError("1040", "Invalid fields: " + invalid.join(", "));
 
     if (!isUpdate) {
         const missing = REQUIRED_COLUMNS.filter(k => !(k in body));
         if (missing.length > 0)
-            throw new Error("Missing required fields: " + missing.join(", "));
+            throw new AppError(
+              "1050",
+              "Missing required fields: " + missing.join(", "),
+            );
     }
 }
 
@@ -335,13 +338,18 @@ async function update({ query, params, body }) {
     validateBody(body, true);
 
     const request = new TableRequest();
-    const id = params?.id;
+    const id = params?.id ?? null;
 
-    if (!id) throw new Error("Missing id");
+    const filters = !query?.filters
+      ? []
+      : Array.isArray(query.filters)
+        ? query.filters
+        : query.filters.split("|").map((f) => f.split(","));
 
     const result = await request.putData({
         table: TABLE,
         id,
+        filters,
         body
     });
 
@@ -357,7 +365,7 @@ async function remove({ query, params, body }) {
     const request = new TableRequest();
     const id = params?.id;
 
-    if (!id) throw new Error("Missing id");
+    if (!id) throw new AppError("1050", "Missing id");
 
     return request.deleteData({
         table: TABLE,

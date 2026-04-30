@@ -15,7 +15,7 @@ router.post("/password/reset", UserController.verifyResetPassword);
 
 // router.post("/:table_name", UserController.);
 
-router.get("/me", requireAccessLevel(10), UserController.getMe);
+router.get("/me", requireAccessLevel(5), UserController.getMe);
 
 router.get("/:table_name", requireAccessLevel(10), tableAccessMiddleware, UserController.getList);
 
